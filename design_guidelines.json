@@ -1,0 +1,106 @@
+{
+  "theme": "dark",
+  "archetype": "5 (Jewel & Luxury)",
+  "vibe": "Immersive, premium, moody, cinematic. A roleplay platform that feels like an emotional storytelling experience rather than a generic tech tool. Emphasis on dark-first layered surfaces, soft off-white text, and one strong warm accent color.",
+  "typography": {
+    "fonts": [
+      {
+        "role": "headings",
+        "family": "Cormorant Garamond",
+        "import_url": "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap",
+        "description": "Used for Character Names, Scene Titles, App Header, and large emotional typography. Brings a literary, fantasy/roleplay texture."
+      },
+      {
+        "role": "body",
+        "family": "Outfit",
+        "import_url": "https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap",
+        "description": "Used for chat messages, UI labels, buttons, and settings. High legibility but modern and distinct from standard system fonts."
+      }
+    ],
+    "rules": {
+      "headings": "tracking-tight, leading-none. Never use pure white.",
+      "body": "leading-relaxed. High legibility for long reading.",
+      "labels": "uppercase, tracking-[0.2em], text-xs"
+    }
+  },
+  "colors": {
+    "background": {
+      "app": "#050505",
+      "surface": "#111111",
+      "surface_elevated": "#1C1C1C",
+      "surface_highlight": "#2A2A2A"
+    },
+    "text": {
+      "primary": "#EDEDED",
+      "secondary": "#A1A1AA",
+      "muted": "#71717A"
+    },
+    "accent": {
+      "primary": "#C6A45C",
+      "primary_hover": "#DBC184",
+      "danger": "#C83A3A",
+      "success": "#3E7B5B"
+    },
+    "borders": {
+      "default": "rgba(255,255,255,0.08)",
+      "focus": "rgba(198,164,92,0.5)"
+    }
+  },
+  "layout_and_spacing": {
+    "strategy": "Mobile-first, optimized for iPhone safe areas. Generous padding in chat reading areas. Bottom-sheet navigation for settings and character info.",
+    "chat_interface": "Floating composer at bottom. Visible inline actions (edit/regen/delete) under each message. Swipe variants using horizontal arrows on the message bubble.",
+    "character_cards": "Bento-style grids or tall masonry for character gallery. Heavy use of images with gradient overlays (bg-gradient-to-t from-black/90 to-transparent).",
+    "spacing_scale": "Tailwind standard, but favor generous padding (p-6, p-8) for modal content to breathe."
+  },
+  "components": {
+    "buttons": "Flat solid for primary actions, 1px subtle borders for secondary. No heavy drop shadows, rely on inner luminance.",
+    "chat_bubbles": "User: soft border, transparent background. AI: solid elevated surface (#111111) with 1px border (#ffffff/10). No cartoonish tails. Border radius max 12px.",
+    "inputs": "Shadcn-based but heavily customized: bg-[#050505], border-white/10, focus:border-accent-primary.",
+    "bottom_sheet": "For mobile navigation (Scenes, Memory, Settings). Crystal glassmorphism (backdrop-blur-xl bg-black/80) with 1px top border."
+  },
+  "motion_and_interaction": {
+    "hover_states": "Slight lift (-translate-y-px) and border color shift.",
+    "transitions": "Use transition-all duration-300 ease-in-out.",
+    "chat_streaming": "Skeleton loaders for 'thinking', soft fade-in for new text."
+  },
+  "media": {
+    "rules": "Never use placeholders. All images must feel premium and cinematic.",
+    "assets": [
+      {
+        "category": "app_background",
+        "url": "https://static.prod-images.emergentagent.com/jobs/c4338545-5522-42fe-a235-e8ec9c90ba5a/images/242fadecc1c0981c2cb9b2dc8e1885f72d975bd9c8b57a14dab7235b5e1ecdcb.png",
+        "description": "Use as a fixed, low-opacity (10-20%) background overlay behind the main app to provide subtle texture."
+      },
+      {
+        "category": "character_avatar",
+        "role": "Sci-Fi Hacker",
+        "url": "https://static.prod-images.emergentagent.com/jobs/c4338545-5522-42fe-a235-e8ec9c90ba5a/images/bec4f093627937edcb21232c2f4ad3748955c4a2aef3dbf5245a61833051acd7.png",
+        "description": "Default avatar for a sci-fi character."
+      },
+      {
+        "category": "character_avatar",
+        "role": "Victorian Vampire",
+        "url": "https://static.prod-images.emergentagent.com/jobs/c4338545-5522-42fe-a235-e8ec9c90ba5a/images/291b9b700cd8c81252d6e06612f1fd6257b56ce16b1669758da75b10cdde5bd0.png",
+        "description": "Default avatar for a historical/gothic character."
+      },
+      {
+        "category": "character_avatar",
+        "role": "Fantasy Rogue",
+        "url": "https://static.prod-images.emergentagent.com/jobs/c4338545-5522-42fe-a235-e8ec9c90ba5a/images/404508a675caaebc92c04f8033d24f183ab920c1f0b48ac6a673548df04dd175.png",
+        "description": "Default avatar for a fantasy character."
+      }
+    ]
+  },
+  "testing": {
+    "attributes": "All interactive elements MUST have `data-testid` attribute (e.g., `data-testid='send-message-button'`)."
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the color palette. Do NOT use default Tailwind colors (no blue-500, no purple-500).",
+    "Use Phosphor icons or Lucide. Ensure action icons under messages are always visible on mobile, not hidden behind hovers.",
+    "Implement a bottom sheet or drawer for mobile navigation between Chat, Memory, Scene, and Profile to keep the UI clean.",
+    "Message bubbles should not look like SMS. They should look like story paragraphs with subtle grouping.",
+    "Ensure the layout prevents the mobile keyboard from hiding the input composer.",
+    "Load both Google fonts in index.css.",
+    "Use the provided image URLs to populate the initial Character Gallery so the app doesn't look empty."
+  ]
+}
