@@ -86,12 +86,10 @@ async def deepseek_call(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not DEEPSEEK_API_KEY:
         raise HTTPException(status_code=500, detail="DEEPSEEK_API_KEY not configured")
 
-    # DeepSeek V4 Flash defaults to "thinking" mode which produces reasoning_content
-    # tokens before the visible response. For roleplay UX we want immediate output,
-    # so we disable thinking unless the caller explicitly opts in.
     payload.setdefault("thinking", {"type": "disabled"})
 
     url = f"{DEEPSEEK_BASE_URL}/chat/completions"
+
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
@@ -103,15 +101,33 @@ async def deepseek_call(payload: Dict[str, Any]) -> Dict[str, Any]:
         except httpx.RequestError as e:
             raise HTTPException(status_code=502, detail=f"DeepSeek network error: {e}")
 
+    print("STATUS:", resp.status_code)
+    print("RAW RESPONSE:", resp.text)
+
     if resp.status_code >= 400:
         try:
             err = resp.json()
         except Exception:
             err = {"raw": resp.text}
-        raise HTTPException(status_code=resp.status_code, detail={"deepseek": err})
 
-    return resp.json()
+        print("DEEPSEEK ERROR:", err)
 
+        raise HTTPException(
+            status_code=resp.status_code,
+            detail={"deepseek": err}
+        )
+
+    try:
+        data = resp.json()
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Invalid JSON response: {resp.text}"
+        )
+
+    print("PARSED RESPONSE:", data)
+
+    return data
 
 # ------------- Regen directives (graduated intensity) -------------
 
