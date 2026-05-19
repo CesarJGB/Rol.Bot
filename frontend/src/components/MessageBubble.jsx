@@ -6,11 +6,7 @@ const renderContent = (text) => {
   const parts = text.split(/(\*[^*]+\*)/g);
   return parts.map((p, i) => {
     if (/^\*[^*]+\*$/.test(p)) {
-      return (
-        <span key={i} className="italic text-[#A1A1AA]">
-          {p.slice(1, -1)}
-        </span>
-      );
+      return <span key={i} className="italic text-[#A1A1AA]">{p.slice(1, -1)}</span>;
     }
     return <span key={i}>{p}</span>;
   });
@@ -34,10 +30,7 @@ export const MessageBubble = ({
   const currentVariant = message.variantIndex ?? 0;
 
   const submitEdit = () => {
-    if (draft.trim() === message.content.trim()) {
-      setEditing(false);
-      return;
-    }
+    if (draft.trim() === message.content.trim()) { setEditing(false); return; }
     onEdit?.(draft);
     setEditing(false);
   };
@@ -57,7 +50,7 @@ export const MessageBubble = ({
       )}
 
       <div className={`flex-1 min-w-0 ${isUser ? "flex flex-col items-end" : ""}`}>
-        {isInitial && <div className="label-eyebrow text-[#C6A45C]/70 mb-1.5">Opening · scene</div>}
+        {isInitial && <div className="label-eyebrow text-[#C6A45C]/70 mb-1.5">Apertura · escena</div>}
         {!editing ? (
           <div
             className={`max-w-[88%] sm:max-w-[80%] rounded-2xl px-4 py-3 text-[15px] leading-relaxed whitespace-pre-wrap break-words ${
@@ -83,14 +76,14 @@ export const MessageBubble = ({
                 onClick={() => { setEditing(false); setDraft(message.content); }}
                 className="text-xs text-[#A1A1AA] hover:text-[#EDEDED] px-3 py-1.5 rounded-full border border-white/[0.08] transition-all inline-flex items-center gap-1"
               >
-                <X size={12} /> Cancel
+                <X size={12} /> Cancelar
               </button>
               <button
                 data-testid={`confirm-edit-${message.id}`}
                 onClick={submitEdit}
                 className="text-xs text-[#111111] bg-[#C6A45C] hover:bg-[#DBC184] px-3 py-1.5 rounded-full transition-all inline-flex items-center gap-1"
               >
-                <Check size={12} /> Save
+                <Check size={12} /> Guardar
               </button>
             </div>
           </div>
@@ -104,7 +97,7 @@ export const MessageBubble = ({
                   data-testid={`swipe-prev-${message.id}`}
                   onClick={() => onSwipe?.(-1)}
                   className="w-7 h-7 grid place-items-center rounded-full hover:bg-white/5 text-[#A1A1AA] hover:text-[#C6A45C] transition-all"
-                  aria-label="Previous variant"
+                  aria-label="Variante anterior"
                 >
                   <ChevronLeft size={14} />
                 </button>
@@ -115,7 +108,7 @@ export const MessageBubble = ({
                   data-testid={`swipe-next-${message.id}`}
                   onClick={() => onSwipe?.(1)}
                   className="w-7 h-7 grid place-items-center rounded-full hover:bg-white/5 text-[#A1A1AA] hover:text-[#C6A45C] transition-all"
-                  aria-label="Next variant"
+                  aria-label="Variante siguiente"
                 >
                   <ChevronRight size={14} />
                 </button>
@@ -127,7 +120,7 @@ export const MessageBubble = ({
               onClick={() => setEditing(true)}
               className="text-[11px] uppercase tracking-wider text-[#71717A] hover:text-[#EDEDED] px-2 py-1 rounded inline-flex items-center gap-1 transition-colors"
             >
-              <Pencil size={11} /> Edit
+              <Pencil size={11} /> Editar
             </button>
             {!isUser && isLast && (
               <button
@@ -135,7 +128,7 @@ export const MessageBubble = ({
                 onClick={() => onRegenerate?.()}
                 className="text-[11px] uppercase tracking-wider text-[#71717A] hover:text-[#C6A45C] px-2 py-1 rounded inline-flex items-center gap-1 transition-colors"
               >
-                <RotateCw size={11} /> Regenerate
+                <RotateCw size={11} /> Regenerar
               </button>
             )}
             <button
@@ -143,7 +136,7 @@ export const MessageBubble = ({
               onClick={() => onDelete?.()}
               className="text-[11px] uppercase tracking-wider text-[#71717A] hover:text-[#C83A3A] px-2 py-1 rounded inline-flex items-center gap-1 transition-colors"
             >
-              <Trash2 size={11} /> Delete
+              <Trash2 size={11} /> Borrar
             </button>
           </div>
         )}

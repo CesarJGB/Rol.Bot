@@ -20,6 +20,14 @@ export default function Gallery() {
     );
   }, [characters, query]);
 
+  // Pick last snippet from the active session of each character.
+  const lastSnippetFor = (charId) => {
+    const bundle = chats[charId];
+    const session = bundle?.sessions?.[bundle?.activeSessionId];
+    const lastMsg = session?.messages?.slice(-1)[0];
+    return lastMsg?.content?.replace(/\*[^*]+\*/g, "").trim().slice(0, 80);
+  };
+
   const handleExport = () => {
     const data = exportAll();
     const blob = new Blob([data], { type: "application/json" });
@@ -29,7 +37,7 @@ export default function Gallery() {
     a.download = `roleplay-export-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    toast.success("Export downloaded");
+    toast.success("Descarga lista");
   };
 
   const handleImport = (e) => {
@@ -39,10 +47,10 @@ export default function Gallery() {
     reader.onload = () => {
       try {
         importAll(reader.result);
-        toast.success("Imported. Refresh to see changes.");
+        toast.success("Importado. Recargando…");
         setTimeout(() => window.location.reload(), 800);
       } catch {
-        toast.error("Invalid JSON file");
+        toast.error("Archivo JSON inválido");
       }
     };
     reader.readAsText(file);
@@ -53,13 +61,13 @@ export default function Gallery() {
       <div className="relative z-10 px-5 pt-10 pb-6 max-w-5xl mx-auto safe-top">
         <div className="flex items-start justify-between gap-4 mb-6">
           <div>
-            <div className="label-eyebrow text-[#C6A45C] mb-2">a roleplay sanctum</div>
+            <div className="label-eyebrow text-[#C6A45C] mb-2">un santuario de roleplay</div>
             <h1 className="font-display text-4xl sm:text-5xl lg:text-6xl text-[#EDEDED] leading-[0.95] tracking-tight">
-              Step into the<br />
-              <span className="italic text-[#C6A45C]">story</span>.
+              Entra en la<br />
+              <span className="italic text-[#C6A45C]">historia</span>.
             </h1>
             <p className="text-[#A1A1AA] mt-3 max-w-md text-sm sm:text-base">
-              Choose a character, or write your own. They will remember you.
+              Elige un personaje, o escribe el tuyo. Te recordarán.
             </p>
           </div>
 
@@ -68,7 +76,7 @@ export default function Gallery() {
               to="/profile"
               data-testid="nav-profile"
               className="w-10 h-10 grid place-items-center rounded-full border border-white/[0.06] hover:bg-white/5 transition-all"
-              aria-label="Profile"
+              aria-label="Perfil"
             >
               <User size={16} />
             </Link>
@@ -76,7 +84,7 @@ export default function Gallery() {
               to="/settings"
               data-testid="nav-settings"
               className="w-10 h-10 grid place-items-center rounded-full border border-white/[0.06] hover:bg-white/5 transition-all"
-              aria-label="Settings"
+              aria-label="Ajustes"
             >
               <Settings size={16} />
             </Link>
@@ -91,7 +99,7 @@ export default function Gallery() {
               type="text"
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder="Search characters, tags…"
+              placeholder="Buscar personajes, etiquetas…"
               className="w-full bg-[#111111] border border-white/[0.08] rounded-full pl-10 pr-4 py-2.5 text-sm text-[#EDEDED] placeholder:text-[#71717A] focus:outline-none focus:border-[#C6A45C]/50 transition-all"
             />
           </div>
@@ -100,7 +108,7 @@ export default function Gallery() {
             data-testid="create-character-button"
             className="inline-flex items-center justify-center gap-2 rounded-full bg-[#C6A45C] hover:bg-[#DBC184] text-[#111111] px-5 py-2.5 text-sm font-medium transition-all"
           >
-            <Plus size={16} /> New character
+            <Plus size={16} /> Nuevo personaje
           </Link>
         </div>
       </div>
@@ -108,17 +116,13 @@ export default function Gallery() {
       <div className="relative z-10 px-5 max-w-5xl mx-auto">
         {filtered.length === 0 ? (
           <div className="text-center py-20 text-[#71717A]">
-            <p className="font-display text-2xl text-[#A1A1AA] mb-1">Nothing here yet.</p>
-            <p className="text-sm">Create your first character to begin.</p>
+            <p className="font-display text-2xl text-[#A1A1AA] mb-1">Aquí no hay nadie aún.</p>
+            <p className="text-sm">Crea tu primer personaje para empezar.</p>
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
             {filtered.map(c => (
-              <CharacterCard
-                key={c.id}
-                character={c}
-                lastSnippet={chats[c.id]?.messages?.slice(-1)[0]?.content?.replace(/\*[^*]+\*/g, "").trim().slice(0, 80)}
-              />
+              <CharacterCard key={c.id} character={c} lastSnippet={lastSnippetFor(c.id)} />
             ))}
           </div>
         )}
@@ -130,11 +134,11 @@ export default function Gallery() {
           onClick={handleExport}
           className="inline-flex items-center gap-1.5 hover:text-[#C6A45C] transition-colors"
         >
-          <Download size={12} /> Export everything
+          <Download size={12} /> Exportar todo
         </button>
         <span className="opacity-30">·</span>
         <label className="inline-flex items-center gap-1.5 hover:text-[#C6A45C] transition-colors cursor-pointer">
-          <Upload size={12} /> Import
+          <Upload size={12} /> Importar
           <input
             data-testid="import-all-input"
             type="file"

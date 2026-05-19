@@ -1,20 +1,20 @@
 import axios from "axios";
 import { API } from "./constants";
 
-const client = axios.create({ baseURL: API, timeout: 95000 });
+const client = axios.create({ baseURL: API, timeout: 120000 });
 
 export const chatComplete = async (payload) => {
   const { data } = await client.post("/chat", payload);
   return data.content;
 };
 
-export const chatVariants = async (payload) => {
-  const { data } = await client.post("/chat/variants", payload);
-  return data.variants;
-};
-
 export const chatRegenerate = async (payload) => {
   const { data } = await client.post("/chat/regenerate", payload);
+  return data.content;
+};
+
+export const chatContinue = async (payload) => {
+  const { data } = await client.post("/chat/continue", payload);
   return data.content;
 };
 
@@ -26,6 +26,11 @@ export const summarizeChat = async ({ messages, character_name, previous_summary
 export const extractMemories = async ({ messages, character_name, existing_memories }) => {
   const { data } = await client.post("/chat/extract-memories", { messages, character_name, existing_memories });
   return data.memories || [];
+};
+
+export const updateEmotion = async ({ messages, character_name, current_state }) => {
+  const { data } = await client.post("/chat/emotion", { messages, character_name, current_state });
+  return data.state;
 };
 
 export const checkHealth = async () => {

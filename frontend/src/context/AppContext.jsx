@@ -5,7 +5,10 @@ import {
   loadProfile, saveProfile,
   loadSettings, saveSettings,
   saveCharacters,
+  newSessionId,
+  buildSession,
 } from "../lib/storage";
+import { DEFAULT_EMOTION } from "../lib/constants";
 
 const AppContext = createContext(null);
 
@@ -27,17 +30,11 @@ export const blankCharacter = (overrides = {}) => ({
   ...overrides,
 });
 
-const blankChat = (character) => ({
-  messages: [],
-  summary: "",
-  memories: [],
-  scene: { ...(character?.sceneDefault || {}), current: "" },
-  updatedAt: Date.now(),
-});
+const emptyChatBundle = () => ({ sessions: {}, activeSessionId: null });
 
 export const AppProvider = ({ children }) => {
   const [characters, setCharacters] = useState(() => ensureSeed() || []);
-  const [chats, setChats] = useState(() => loadChats());
+  const [chats, setChats] = useState(() => loadChats(ensureSeed() || []));
   const [profile, setProfile] = useState(() => loadProfile());
   const [settings, setSettings] = useState(() => loadSettings());
 
@@ -46,6 +43,7 @@ export const AppProvider = ({ children }) => {
   useEffect(() => { saveProfile(profile); }, [profile]);
   useEffect(() => { saveSettings(settings); }, [settings]);
 
+  // ---- characters ----
   const upsertCharacter = useCallback((c) => {
     setCharacters(prev => {
       const idx = prev.findIndex(x => x.id === c.id);
@@ -69,27 +67,133 @@ export const AppProvider = ({ children }) => {
 
   const getCharacter = useCallback((id) => characters.find(c => c.id === id), [characters]);
 
-  const getChat = useCallback((characterId) => chats[characterId], [chats]);
+  // ---- chat bundle helpers ----
+  const getBundle = useCallback((characterId) => chats[characterId] || emptyChatBundle(), [chats]);
 
-  const ensureChat = useCallback((characterId) => {
+  const getActiveSession = useCallback((characterId) => {
+    const bundle = chats[characterId];
+    if (!bundle?.activeSessionId) return null;
+    return bundle.sessions[bundle.activeSessionId] || null;
+  }, [chats]);
+
+  // Ensure character has at least one session and an active one.
+  const ensureSession = useCallback((characterId) => {
     setChats(prev => {
-      if (prev[characterId]) return prev;
+      const bundle = prev[characterId] || emptyChatBundle();
+      if (bundle.activeSessionId && bundle.sessions[bundle.activeSessionId]) return prev;
+      // No active session — create one (or pick the most recently updated).
+      const sessionIds = Object.keys(bundle.sessions);
+      if (sessionIds.length > 0) {
+        const newest = sessionIds.sort((a, b) => (bundle.sessions[b].updatedAt || 0) - (bundle.sessions[a].updatedAt || 0))[0];
+        return { ...prev, [characterId]: { ...bundle, activeSessionId: newest } };
+      }
       const character = characters.find(c => c.id === characterId);
-      return { ...prev, [characterId]: blankChat(character) };
+      const session = buildSession({ name: "Conversación principal" }, character);
+      return {
+        ...prev,
+        [characterId]: { sessions: { [session.id]: session }, activeSessionId: session.id },
+      };
     });
   }, [characters]);
 
-  const updateChat = useCallback((characterId, updater) => {
-    setChats(prev => {
-      const current = prev[characterId] || blankChat(characters.find(c => c.id === characterId));
-      const next = typeof updater === "function" ? updater(current) : updater;
-      return { ...prev, [characterId]: { ...next, updatedAt: Date.now() } };
-    });
-  }, [characters]);
-
-  const resetChat = useCallback((characterId) => {
+  const createSession = useCallback((characterId, name) => {
     const character = characters.find(c => c.id === characterId);
-    setChats(prev => ({ ...prev, [characterId]: blankChat(character) }));
+    const session = buildSession({ name: name || `Conversación ${Object.keys(getBundle(characterId).sessions).length + 1}` }, character);
+    setChats(prev => {
+      const bundle = prev[characterId] || emptyChatBundle();
+      return {
+        ...prev,
+        [characterId]: {
+          sessions: { ...bundle.sessions, [session.id]: session },
+          activeSessionId: session.id,
+        },
+      };
+    });
+    return session.id;
+  }, [characters, getBundle]);
+
+  const switchSession = useCallback((characterId, sessionId) => {
+    setChats(prev => {
+      const bundle = prev[characterId];
+      if (!bundle?.sessions?.[sessionId]) return prev;
+      return { ...prev, [characterId]: { ...bundle, activeSessionId: sessionId } };
+    });
+  }, []);
+
+  const renameSession = useCallback((characterId, sessionId, name) => {
+    setChats(prev => {
+      const bundle = prev[characterId];
+      if (!bundle?.sessions?.[sessionId]) return prev;
+      return {
+        ...prev,
+        [characterId]: {
+          ...bundle,
+          sessions: { ...bundle.sessions, [sessionId]: { ...bundle.sessions[sessionId], name, updatedAt: Date.now() } },
+        },
+      };
+    });
+  }, []);
+
+  const deleteSession = useCallback((characterId, sessionId) => {
+    setChats(prev => {
+      const bundle = prev[characterId];
+      if (!bundle?.sessions?.[sessionId]) return prev;
+      const { [sessionId]: _, ...rest } = bundle.sessions;
+      const remainingIds = Object.keys(rest);
+      let activeSessionId = bundle.activeSessionId;
+      if (sessionId === activeSessionId) {
+        activeSessionId = remainingIds[0] || null;
+      }
+      // If no sessions left, create a fresh one.
+      if (!activeSessionId) {
+        const character = characters.find(c => c.id === characterId);
+        const fresh = buildSession({ name: "Conversación principal" }, character);
+        return {
+          ...prev,
+          [characterId]: { sessions: { [fresh.id]: fresh }, activeSessionId: fresh.id },
+        };
+      }
+      return { ...prev, [characterId]: { sessions: rest, activeSessionId } };
+    });
+  }, [characters]);
+
+  // Update the active session. updater(session) -> newSession
+  const updateActiveSession = useCallback((characterId, updater) => {
+    setChats(prev => {
+      const bundle = prev[characterId];
+      if (!bundle?.activeSessionId) return prev;
+      const current = bundle.sessions[bundle.activeSessionId];
+      const next = typeof updater === "function" ? updater(current) : updater;
+      return {
+        ...prev,
+        [characterId]: {
+          ...bundle,
+          sessions: { ...bundle.sessions, [bundle.activeSessionId]: { ...next, updatedAt: Date.now() } },
+        },
+      };
+    });
+  }, []);
+
+  // Reset active session to a blank one (preserving the session id and name).
+  const resetActiveSession = useCallback((characterId) => {
+    const character = characters.find(c => c.id === characterId);
+    setChats(prev => {
+      const bundle = prev[characterId];
+      if (!bundle?.activeSessionId) return prev;
+      const current = bundle.sessions[bundle.activeSessionId];
+      const fresh = buildSession({
+        id: current.id,
+        name: current.name,
+        emotion: { ...DEFAULT_EMOTION },
+      }, character);
+      return {
+        ...prev,
+        [characterId]: {
+          ...bundle,
+          sessions: { ...bundle.sessions, [bundle.activeSessionId]: fresh },
+        },
+      };
+    });
   }, [characters]);
 
   const value = useMemo(() => ({
@@ -98,8 +202,10 @@ export const AppProvider = ({ children }) => {
     profile, setProfile,
     settings, setSettings,
     upsertCharacter, deleteCharacter, getCharacter,
-    getChat, ensureChat, updateChat, resetChat,
-  }), [characters, chats, profile, settings, upsertCharacter, deleteCharacter, getCharacter, getChat, ensureChat, updateChat, resetChat]);
+    getBundle, getActiveSession,
+    ensureSession, createSession, switchSession, renameSession, deleteSession,
+    updateActiveSession, resetActiveSession,
+  }), [characters, chats, profile, settings, upsertCharacter, deleteCharacter, getCharacter, getBundle, getActiveSession, ensureSession, createSession, switchSession, renameSession, deleteSession, updateActiveSession, resetActiveSession]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };

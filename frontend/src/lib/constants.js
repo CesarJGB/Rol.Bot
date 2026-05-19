@@ -1,4 +1,5 @@
-// Centralized model constant per spec.
+// Centralized constants.
+
 export const DEEPSEEK_MODEL = "deepseek-v4-flash";
 
 export const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -23,8 +24,12 @@ export const DEFAULT_SETTINGS = {
   emotionalIntensity: 55,
   maxTokens: 420,
   shortHistory: 8,
-  summarizeEvery: 12,
-  extractMemoryEvery: 6,
+  // More frequent updates than before — keeps summary "alive".
+  summarizeEvery: 8,
+  extractMemoryEvery: 4,
+  emotionEvery: 6,
+  // Contextual memory retrieval limit per turn.
+  maxMemoriesPerTurn: 8,
 };
 
 export const DEFAULT_PROFILE = {
@@ -32,4 +37,20 @@ export const DEFAULT_PROFILE = {
   personality: "",
   appearance: "",
   background: "",
+};
+
+export const DEFAULT_EMOTION = {
+  trust: 50,
+  affection: 50,
+  tension: 30,
+  fear: 20,
+  hostility: 20,
+};
+
+export const EMOTION_LABELS_ES = {
+  trust: "Confianza",
+  affection: "Afecto",
+  tension: "Tensión",
+  fear: "Miedo",
+  hostility: "Hostilidad",
 };

@@ -36,7 +36,7 @@ export const CharacterCard = ({ character, lastSnippet }) => {
             to={`/character/${character.id}/edit`}
             data-testid={`edit-character-${character.id}`}
             className="w-8 h-8 grid place-items-center rounded-full border border-white/[0.06] hover:bg-white/5 text-[#A1A1AA] hover:text-[#EDEDED] transition-all"
-            aria-label="Edit character"
+            aria-label="Editar personaje"
           >
             <Pencil size={14} />
           </Link>
@@ -44,7 +44,7 @@ export const CharacterCard = ({ character, lastSnippet }) => {
             to={`/chat/${character.id}`}
             data-testid={`open-chat-${character.id}`}
             className="w-8 h-8 grid place-items-center rounded-full bg-[#C6A45C] hover:bg-[#DBC184] text-[#111111] transition-all"
-            aria-label="Open chat"
+            aria-label="Abrir chat"
           >
             <MessageCircle size={14} />
           </Link>

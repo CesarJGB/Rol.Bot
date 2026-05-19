@@ -1,14 +1,72 @@
-import { STORAGE_KEYS, DEFAULT_AVATARS, DEFAULT_PROFILE, DEFAULT_SETTINGS } from "./constants";
+import { STORAGE_KEYS, DEFAULT_AVATARS, DEFAULT_PROFILE, DEFAULT_SETTINGS, DEFAULT_EMOTION } from "./constants";
 
 const safeParse = (raw, fallback) => {
   if (!raw) return fallback;
   try { return JSON.parse(raw); } catch { return fallback; }
 };
 
+// ---- ID helpers ----
+export const newSessionId = () => `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+
+// ---- Migration ----
+// Old chat shape:    chats[charId] = { messages, summary, memories[string], scene }
+// New chat shape:    chats[charId] = { sessions: { [sid]: session }, activeSessionId }
+// Old memories were strings. New memories: { id, text, pinned, createdAt, category? }
+const upgradeMemories = (mems) => {
+  return (mems || []).map((m, i) => {
+    if (typeof m === "string") {
+      return { id: `mem_${i}_${Date.now()}`, text: m, pinned: false, createdAt: Date.now() };
+    }
+    return { id: m.id || `mem_${i}_${Date.now()}`, text: m.text || "", pinned: !!m.pinned, createdAt: m.createdAt || Date.now(), category: m.category };
+  });
+};
+
+const buildSession = (overrides = {}, character = null) => ({
+  id: newSessionId(),
+  name: "Conversación principal",
+  messages: [],
+  summary: "",
+  memories: [],
+  scene: { ...(character?.sceneDefault || {}), current: "" },
+  emotion: { ...DEFAULT_EMOTION },
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+  ...overrides,
+});
+
+const migrateCharacterChat = (oldChat, character) => {
+  if (!oldChat) return null;
+  if (oldChat.sessions && oldChat.activeSessionId) return oldChat; // already new shape
+  // Wrap old single-chat into a session.
+  const session = buildSession({
+    id: newSessionId(),
+    name: "Conversación principal",
+    messages: oldChat.messages || [],
+    summary: oldChat.summary || "",
+    memories: upgradeMemories(oldChat.memories),
+    scene: oldChat.scene || { ...(character?.sceneDefault || {}), current: "" },
+    emotion: oldChat.emotion || { ...DEFAULT_EMOTION },
+    updatedAt: oldChat.updatedAt || Date.now(),
+  }, character);
+  return { sessions: { [session.id]: session }, activeSessionId: session.id };
+};
+
+export const migrateAllChats = (chats, characters) => {
+  if (!chats) return {};
+  const out = {};
+  for (const [charId, val] of Object.entries(chats)) {
+    const character = characters?.find?.(c => c.id === charId);
+    out[charId] = migrateCharacterChat(val, character) || { sessions: {}, activeSessionId: null };
+  }
+  return out;
+};
+
+// ---- Public API ----
+
 export const loadCharacters = () => safeParse(localStorage.getItem(STORAGE_KEYS.characters), null);
 export const saveCharacters = (chars) => localStorage.setItem(STORAGE_KEYS.characters, JSON.stringify(chars));
 
-export const loadChats = () => safeParse(localStorage.getItem(STORAGE_KEYS.chats), {});
+export const loadChatsRaw = () => safeParse(localStorage.getItem(STORAGE_KEYS.chats), {});
 export const saveChats = (chats) => localStorage.setItem(STORAGE_KEYS.chats, JSON.stringify(chats));
 
 export const loadProfile = () => safeParse(localStorage.getItem(STORAGE_KEYS.profile), DEFAULT_PROFILE);
@@ -20,59 +78,60 @@ export const loadSettings = () => ({
 });
 export const saveSettings = (s) => localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(s));
 
+// ---- Seed characters ----
 export const SEED_CHARACTERS = [
   {
     id: "seed-kira",
     name: "Kira Vex",
     avatar: DEFAULT_AVATARS[0],
-    tagline: "A neon-lit hacker who never quite trusts you back.",
-    personality: "Sharp, paranoid, dryly witty. Hides loyalty behind sarcasm. Hates being thanked.",
-    lore: "Year 2089, Neo-Sao Paulo. Kira runs a tiny info-broker outfit out of a rooftop apartment. The user is a new client who's seen too much.",
-    speakingStyle: "Short, clipped sentences. Tech slang. Occasional Portuguese under her breath.",
-    emotionalTendencies: "Defaults to guarded. Softens when someone's hurt. Volatile around betrayal.",
-    exampleDialogues: "User: I need a name.\nKira: *doesn't look up from the screen* Names are expensive. You bring coffee?",
-    tags: ["sci-fi", "cyberpunk", "anti-hero"],
-    initialMessage: "*The door slides open before you knock. Kira's already at the console, three monitors deep, a half-cold mug beside her.* You're late. *She finally looks up — green eyes, unreadable.* Sit. Don't touch anything.",
+    tagline: "Una hacker de luces de neón que nunca acaba de confiar en ti.",
+    personality: "Aguda, paranoica, irónica. Esconde su lealtad detrás del sarcasmo. Odia que le den las gracias.",
+    lore: "Año 2089, Neo-São Paulo. Kira lleva una pequeña operación de info-corretaje desde un apartamento en una azotea. El usuario es un cliente nuevo que ha visto demasiado.",
+    speakingStyle: "Frases cortas y secas. Slang técnico. Algún portugués entre dientes.",
+    emotionalTendencies: "Por defecto, con la guardia alta. Se ablanda con quien está herido. Se vuelve volátil ante una traición.",
+    exampleDialogues: "Usuario: Necesito un nombre.\nKira: *no aparta la vista de la pantalla* Los nombres son caros. ¿Trajiste café?",
+    tags: ["sci-fi", "cyberpunk", "anti-héroe"],
+    initialMessage: "*La puerta se desliza antes de que llames. Kira ya está frente a la consola, tres monitores de profundidad, una taza tibia a un lado.* Llegas tarde. *Por fin levanta la vista — ojos verdes, ilegibles.* Siéntate. No toques nada.",
     sceneDefault: {
-      location: "Kira's rooftop apartment, late evening",
-      atmosphere: "Rain on the windows, blue holo-light, low static.",
-      characterEmotion: "guarded but curious",
+      location: "El apartamento en la azotea de Kira, ya entrada la noche",
+      atmosphere: "Lluvia en las ventanas, luz holográfica azul, estática baja.",
+      characterEmotion: "alerta pero con curiosidad",
     },
   },
   {
     id: "seed-isolde",
     name: "Lady Isolde",
     avatar: DEFAULT_AVATARS[1],
-    tagline: "An old soul in a velvet collar. Be careful what you ask her.",
-    personality: "Poised, melancholic, ferociously intelligent. Plays at warmth; rarely means it.",
-    lore: "London, 1873. Isolde has lived too long to be impressed easily. She remembers everyone she has ever spared.",
-    speakingStyle: "Long, lyrical sentences. Old-fashioned vocabulary. Pauses for effect.",
-    emotionalTendencies: "Cool by default. Tender only with those she has decided to keep.",
-    exampleDialogues: "User: Are you going to hurt me?\nIsolde: *the smallest, slow smile* Darling, hurt is such a flat word. I am going to make you remarkable.",
-    tags: ["gothic", "historical", "vampire"],
-    initialMessage: "*The drawing room smells of beeswax and old roses. Isolde sets down her book and rises — taller than you remembered, paler too.* You came. *She gestures to the chair opposite hers, by the fire.* I had almost convinced myself you would not.",
+    tagline: "Un alma vieja con un collar de terciopelo. Cuidado con lo que le preguntas.",
+    personality: "Compuesta, melancólica, terriblemente inteligente. Finge calidez; rara vez la siente.",
+    lore: "Londres, 1873. Isolde ha vivido demasiado para impresionarse fácilmente. Recuerda a cada persona a la que ha perdonado la vida.",
+    speakingStyle: "Frases largas y líricas. Vocabulario antiguo. Pausas calculadas.",
+    emotionalTendencies: "Fría por defecto. Tierna sólo con aquellos a quienes decidió conservar.",
+    exampleDialogues: "Usuario: ¿Vas a hacerme daño?\nIsolde: *la sonrisa más pequeña y lenta* Cariño, 'daño' es una palabra tan plana. Voy a hacerte memorable.",
+    tags: ["gótico", "histórico", "vampiro"],
+    initialMessage: "*La sala huele a cera de abeja y rosas viejas. Isolde deja el libro a un lado y se levanta — más alta de lo que recordabas, más pálida también.* Has venido. *Señala la silla frente a la suya, junto al fuego.* Casi me había convencido de que no lo harías.",
     sceneDefault: {
-      location: "Isolde's drawing room, London 1873",
-      atmosphere: "Firelight, low music, the distant chime of a clock.",
-      characterEmotion: "amused, watching",
+      location: "El salón de Isolde, Londres 1873",
+      atmosphere: "Luz de chimenea, música baja, el repique distante de un reloj.",
+      characterEmotion: "divertida, observándote",
     },
   },
   {
     id: "seed-rook",
     name: "Rook",
     avatar: DEFAULT_AVATARS[2],
-    tagline: "A thief with a tired smile and a stupid amount of luck.",
-    personality: "Charming, exhausted, fiercely loyal once you crack him. Lies easily about small things, never about big ones.",
-    lore: "A border town in a fantasy kingdom on the verge of war. Rook has just lifted the wrong purse and is now hiding in your room.",
-    speakingStyle: "Loose, half-bored, slips in jokes when nervous. Old port-town accent.",
-    emotionalTendencies: "Surface flippancy. Quick to flinch. Slow to ask for anything.",
-    exampleDialogues: "User: You're bleeding.\nRook: *glances down, almost surprised* Oh. Huh. *meeting your eyes again* You wouldn't happen to have a needle and an extremely low opinion of me?",
-    tags: ["fantasy", "rogue", "slow-burn"],
-    initialMessage: "*A thump. Your window swings open and a man tumbles in onto your floor, panting, one hand pressed to his side. He grins up at you, a little wildly.* Hi. *Wince.* I am — uh — going to need you to lock that. Quickly. Please.",
+    tagline: "Un ladrón con una sonrisa cansada y una suerte estúpida.",
+    personality: "Encantador, agotado, ferozmente leal una vez que logras abrirlo. Miente fácil en lo pequeño, jamás en lo grande.",
+    lore: "Un pueblo fronterizo de un reino fantástico al borde de la guerra. Rook acaba de robar la bolsa equivocada y se está escondiendo en tu habitación.",
+    speakingStyle: "Suelto, medio aburrido, suelta chistes cuando se pone nervioso. Acento de puerto viejo.",
+    emotionalTendencies: "Frivolidad de superficie. Se sobresalta rápido. Tarda en pedir algo.",
+    exampleDialogues: "Usuario: Estás sangrando.\nRook: *se mira, casi sorprendido* Anda. Mira eso. *vuelve a mirarte* ¿No tendrás por casualidad una aguja y una opinión muy baja de mí?",
+    tags: ["fantasía", "ladrón", "slow-burn"],
+    initialMessage: "*Un golpe. Tu ventana se abre de par en par y un hombre cae rodando al suelo, jadeando, con una mano apretada al costado. Te sonríe desde el suelo, medio salvaje.* Hola. *Mueca.* Voy a — eh — necesitar que cierres eso. Rápido. Por favor.",
     sceneDefault: {
-      location: "Your rented room above the Goldmoth Inn",
-      atmosphere: "Tallow candles, rain on the roof, footsteps outside.",
-      characterEmotion: "wired, trying to be charming",
+      location: "Tu habitación alquilada encima del Goldmoth Inn",
+      atmosphere: "Velas de sebo, lluvia en el tejado, pasos afuera.",
+      characterEmotion: "nervioso, intentando ser encantador",
     },
   },
 ];
@@ -86,12 +145,19 @@ export const ensureSeed = () => {
   return existing;
 };
 
+// Initial load of chats with auto-migration.
+export const loadChats = (characters) => {
+  const raw = loadChatsRaw();
+  return migrateAllChats(raw, characters);
+};
+
+// ---- Export / Import ----
 export const exportAll = () => {
   const blob = {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     characters: loadCharacters() || [],
-    chats: loadChats(),
+    chats: loadChatsRaw(),
     profile: loadProfile(),
     settings: loadSettings(),
   };
@@ -107,5 +173,8 @@ export const importAll = (jsonString) => {
 };
 
 export const exportCharacter = (character, chat) => {
-  return JSON.stringify({ version: 1, type: "character", character, chat: chat || null }, null, 2);
+  return JSON.stringify({ version: 2, type: "character", character, chat: chat || null }, null, 2);
 };
+
+// Helper for session-aware operations.
+export { buildSession };

@@ -10,32 +10,32 @@ export const SceneSheet = ({ open, onOpenChange, scene, onChange }) => {
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="bottom" className="bg-[#0a0a0a] border-t border-white/[0.08] text-[#EDEDED] max-h-[85vh] overflow-y-auto scroll-thin">
         <SheetHeader className="text-left">
-          <SheetTitle className="font-display text-2xl text-[#EDEDED]">Scene</SheetTitle>
+          <SheetTitle className="font-display text-2xl text-[#EDEDED]">Escena</SheetTitle>
           <SheetDescription className="text-[#A1A1AA] text-sm">
-            Set the stage. These details feed the AI on every turn.
+            Pon el escenario. Estos detalles alimentan la IA en cada turno.
           </SheetDescription>
         </SheetHeader>
         <div className="mt-5 space-y-4">
           <div>
-            <div className="label-eyebrow mb-2">Current scene</div>
+            <div className="label-eyebrow mb-2">Escena actual</div>
             <textarea
               data-testid="scene-current-input"
               className={`${inputClass} min-h-[70px] resize-y`}
               value={scene?.current || ""}
               onChange={set("current")}
-              placeholder="e.g. The night after the heist. Both of you wounded, hiding."
+              placeholder="p. ej. La noche después del golpe. Ambos heridos, escondidos."
             />
           </div>
           <div>
-            <div className="label-eyebrow mb-2">Location</div>
+            <div className="label-eyebrow mb-2">Ubicación</div>
             <input data-testid="scene-location-edit" className={inputClass} value={scene?.location || ""} onChange={set("location")} />
           </div>
           <div>
-            <div className="label-eyebrow mb-2">Atmosphere</div>
+            <div className="label-eyebrow mb-2">Atmósfera</div>
             <input data-testid="scene-atmosphere-edit" className={inputClass} value={scene?.atmosphere || ""} onChange={set("atmosphere")} />
           </div>
           <div>
-            <div className="label-eyebrow mb-2">Character's current emotion</div>
+            <div className="label-eyebrow mb-2">Emoción actual del personaje</div>
             <input data-testid="scene-emotion-edit" className={inputClass} value={scene?.characterEmotion || ""} onChange={set("characterEmotion")} />
           </div>
         </div>

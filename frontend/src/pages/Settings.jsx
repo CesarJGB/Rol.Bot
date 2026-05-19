@@ -2,6 +2,7 @@ import React from "react";
 import { useApp } from "../context/AppContext";
 import { TopBar } from "../components/TopBar";
 import { Slider } from "../components/ui/slider";
+import { DEFAULT_SETTINGS } from "../lib/constants";
 import { toast } from "sonner";
 
 const SliderRow = ({ label, value, onChange, hint, testId, min = 0, max = 100 }) => (
@@ -28,60 +29,68 @@ export default function Settings() {
 
   return (
     <div className="min-h-screen app-bg pb-24">
-      <TopBar title="Style controls" subtitle="Tune the voice" />
+      <TopBar title="Estilo y ajustes" subtitle="Afina la voz" />
       <div className="max-w-xl mx-auto px-4 py-6 relative z-10">
         <p className="text-sm text-[#A1A1AA] mb-7 leading-relaxed">
-          These shape how every character responds. Higher values = warmer, looser, more emotionally charged.
+          Estos ajustes moldean cómo responde cada personaje. Valores altos = más cálido, suelto y emocionalmente intenso.
         </p>
 
         <SliderRow
-          label="Creativity"
+          label="Creatividad"
           testId="creativity"
           value={settings.creativity}
           onChange={(v) => update("creativity", v)}
-          hint="Lower = grounded and predictable. Higher = surprising, lyrical, willing to take risks."
+          hint="Bajo = aterrizado y predecible. Alto = sorprendente, lírico, dispuesto a tomar riesgos."
         />
         <SliderRow
-          label="Romanticism"
+          label="Romanticismo"
           testId="romanticism"
           value={settings.romanticism}
           onChange={(v) => update("romanticism", v)}
-          hint="Lower = focus on plot and tension. Higher = intimacy, longing, sensory detail."
+          hint="Bajo = enfoque en trama y tensión. Alto = intimidad, anhelo, detalle sensorial."
         />
         <SliderRow
-          label="Emotional intensity"
+          label="Intensidad emocional"
           testId="emotionalIntensity"
           value={settings.emotionalIntensity}
           onChange={(v) => update("emotionalIntensity", v)}
-          hint="Lower = restrained, subtext-driven. Higher = let the feelings run hot."
+          hint="Bajo = contenido, en el subtexto. Alto = deja que las emociones ardan."
         />
 
         <div className="border-t border-white/[0.06] pt-6 mt-2">
-          <div className="label-eyebrow mb-4">Advanced</div>
+          <div className="label-eyebrow mb-4">Avanzado</div>
           <SliderRow
-            label="Max tokens / reply"
+            label="Tokens máx. por respuesta"
             testId="maxTokens"
             value={settings.maxTokens}
             onChange={(v) => update("maxTokens", v)}
             min={120} max={800}
-            hint="How long replies can get. Lower = cheaper + snappier. 350–450 is a sweet spot."
+            hint="Cuánto pueden alargarse las respuestas. Bajo = más barato y ágil. 350–450 es un punto dulce."
           />
           <SliderRow
-            label="Recent history kept raw"
+            label="Historial reciente sin comprimir"
             testId="shortHistory"
             value={settings.shortHistory}
             onChange={(v) => update("shortHistory", v)}
             min={4} max={16}
-            hint="Older messages are compressed into a summary to save tokens."
+            hint="Los mensajes más antiguos se comprimen automáticamente en el resumen para ahorrar tokens."
+          />
+          <SliderRow
+            label="Memorias máx. inyectadas por turno"
+            testId="maxMemoriesPerTurn"
+            value={settings.maxMemoriesPerTurn}
+            onChange={(v) => update("maxMemoriesPerTurn", v)}
+            min={3} max={20}
+            hint="Sólo los recuerdos más relevantes al contexto se inyectan. Los fijados (★) siempre se incluyen."
           />
         </div>
 
         <button
           data-testid="reset-settings-button"
-          onClick={() => { setSettings({ creativity: 60, romanticism: 40, emotionalIntensity: 55, maxTokens: 420, shortHistory: 8, summarizeEvery: 12, extractMemoryEvery: 6 }); toast.success("Reset to defaults"); }}
+          onClick={() => { setSettings({ ...DEFAULT_SETTINGS }); toast.success("Valores restaurados"); }}
           className="text-xs text-[#71717A] hover:text-[#C6A45C] transition-colors mt-2"
         >
-          Reset to defaults
+          Restablecer valores por defecto
         </button>
       </div>
     </div>
