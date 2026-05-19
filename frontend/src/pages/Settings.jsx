@@ -2,7 +2,8 @@ import React from "react";
 import { useApp } from "../context/AppContext";
 import { TopBar } from "../components/TopBar";
 import { Slider } from "../components/ui/slider";
-import { DEFAULT_SETTINGS } from "../lib/constants";
+import { Switch } from "../components/ui/switch";
+import { DEFAULT_SETTINGS, API_BASE_URL, DEEPSEEK_MODEL } from "../lib/constants";
 import { toast } from "sonner";
 
 const SliderRow = ({ label, value, onChange, hint, testId, min = 0, max = 100 }) => (
@@ -59,6 +60,23 @@ export default function Settings() {
 
         <div className="border-t border-white/[0.06] pt-6 mt-2">
           <div className="label-eyebrow mb-4">Avanzado</div>
+
+          {/* Streaming toggle */}
+          <div className="mb-7 flex items-start justify-between gap-4" data-testid="setting-streaming">
+            <div className="flex-1">
+              <div className="label-eyebrow mb-1">Efecto máquina de escribir</div>
+              <div className="text-xs text-[#71717A] leading-relaxed">
+                Muestra las respuestas palabra a palabra mientras se generan. Si lo apagas, aparecerán de golpe.
+              </div>
+            </div>
+            <Switch
+              data-testid="streaming-toggle"
+              checked={!!settings.streamingEnabled}
+              onCheckedChange={(v) => update("streamingEnabled", v)}
+              className="mt-1 data-[state=checked]:bg-[#C6A45C]"
+            />
+          </div>
+
           <SliderRow
             label="Tokens máx. por respuesta"
             testId="maxTokens"
@@ -92,6 +110,13 @@ export default function Settings() {
         >
           Restablecer valores por defecto
         </button>
+
+        {/* Diagnóstico — útil para verificar que apuntas al backend correcto. */}
+        <div className="mt-10 pt-5 border-t border-white/[0.06] text-[11px] text-[#71717A] space-y-1">
+          <div className="label-eyebrow mb-2 text-[#71717A]">Diagnóstico</div>
+          <div><span className="opacity-70">API:</span> <span className="text-[#A1A1AA] break-all" data-testid="diag-api-url">{API_BASE_URL}</span></div>
+          <div><span className="opacity-70">Modelo:</span> <span className="text-[#A1A1AA]">{DEEPSEEK_MODEL}</span></div>
+        </div>
       </div>
     </div>
   );

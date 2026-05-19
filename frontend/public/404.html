@@ -1,0 +1,18 @@
+<!doctype html>
+<!--
+  GitHub Pages SPA fallback. When the user reloads on a deep route
+  (or shares a /chat/:id URL), GH Pages returns 404 unless this file exists.
+  Since this app uses HashRouter (#/chat/...), this fallback rarely fires,
+  but is kept as a safety net for custom-domain deployments.
+-->
+<html>
+  <head><meta charset="utf-8" /></head>
+  <body>
+    <script>
+      // Redirect to the SPA root, preserving the original path in the hash.
+      var path = window.location.pathname + window.location.search + window.location.hash;
+      var origin = window.location.origin;
+      window.location.replace(origin + "/#" + path);
+    </script>
+  </body>
+</html>

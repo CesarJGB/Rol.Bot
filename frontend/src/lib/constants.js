@@ -1,9 +1,7 @@
-// Centralized constants.
+// Centralized constants. Re-exports API config from /src/config.js.
+// To change the backend URL, edit /src/config.js (NOT this file).
 
-export const DEEPSEEK_MODEL = "deepseek-v4-flash";
-
-export const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-export const API = `${BACKEND_URL}/api`;
+export { DEEPSEEK_MODEL, API, API_BASE_URL, API_PREFIX } from "../config";
 
 export const DEFAULT_AVATARS = [
   "https://static.prod-images.emergentagent.com/jobs/c4338545-5522-42fe-a235-e8ec9c90ba5a/images/bec4f093627937edcb21232c2f4ad3748955c4a2aef3dbf5245a61833051acd7.png",
@@ -24,12 +22,12 @@ export const DEFAULT_SETTINGS = {
   emotionalIntensity: 55,
   maxTokens: 420,
   shortHistory: 8,
-  // More frequent updates than before — keeps summary "alive".
   summarizeEvery: 8,
   extractMemoryEvery: 4,
   emotionEvery: 6,
-  // Contextual memory retrieval limit per turn.
   maxMemoriesPerTurn: 8,
+  // Streaming: typewriter effect. Set to false for one-shot responses.
+  streamingEnabled: true,
 };
 
 export const DEFAULT_PROFILE = {

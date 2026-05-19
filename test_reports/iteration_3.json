@@ -1,0 +1,64 @@
+{
+  "summary": "Iteration 3 E2E test PASSES. Backend 11/11 pytest cases pass against public URL: streaming SSE works end-to-end (text/event-stream content-type, multiple {\"delta\":\"...\"} chunks, terminates with [DONE]), CORS allows *.github.io (preflight from https://test.github.io returns 200 with Access-Control-Allow-Origin echoing the origin), CORS still allows localhost:3000, malformed body returns 422, all legacy endpoints (/api/health, /api/chat, /api/chat/regenerate, /api/chat/continue, /api/chat/summarize, /api/chat/extract-memories, /api/chat/emotion) continue to work with the new thinking:disabled default. Frontend HashRouter active (URLs use /#/settings and /#/chat/seed-kira). Gallery loads at root, Chat composer renders, Settings shows Diagnóstico section with data-testid='diag-api-url' = https://deepseek-roleplay.preview.emergentagent.com and model = deepseek-v4-flash. data-testid='streaming-toggle' present, defaults to checked. Typewriter streaming verified: sending a message with streaming ON produced 8 distinct text-length growth steps (315->561 chars over ~2.5s); after toggling streaming OFF, the same flow produced only 2 steps (single jump 568->694) confirming non-streaming mode. Continuar button still renders. config.js exports API_BASE_URL, API, API_PREFIX, DEEPSEEK_MODEL, ROUTER_BASENAME. constants.js re-exports them. api.js uses API from config (no hardcoded URLs) and exports async generator chatStream().",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/chat/stream", "issue": "X-Accel-Buffering: no header is set by server.py but stripped by the Cloudflare edge in front of the preview URL. Cache-Control is also rewritten by CF from 'no-cache, no-transform' to 'no-store, no-cache, must-revalidate'. Streaming still works end-to-end (Transfer-Encoding: chunked is preserved), but on Render/Railway/own-domain deployments verify the header survives — it matters for nginx proxies."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration3.py",
+    "/app/test_reports/pytest/iteration3_results.xml"
+  ],
+  "tests_executed": {
+    "backend": [
+      "GET /api/health -> 200 has_key=true",
+      "POST /api/chat -> 200 non-empty content",
+      "POST /api/chat malformed body -> 422",
+      "POST /api/chat/regenerate attempt=1 -> 200 with attempt echoed",
+      "POST /api/chat/continue -> 200 non-empty content",
+      "POST /api/chat/summarize -> 200 with summary",
+      "POST /api/chat/extract-memories -> 200 with memory list",
+      "POST /api/chat/emotion -> 200 all 5 keys 0-100",
+      "POST /api/chat/stream -> 200, content-type=text/event-stream, >=2 delta chunks, terminates with [DONE]",
+      "OPTIONS /api/chat with Origin: https://test.github.io -> 200/204, Access-Control-Allow-Origin echoes origin (regex matches *.github.io)",
+      "OPTIONS /api/chat with Origin: http://localhost:3000 -> 200/204, allowed"
+    ],
+    "frontend": [
+      "HashRouter: root URL loads Gallery (Kira Vex + 'Nuevo personaje' visible)",
+      "HashRouter: /#/settings renders Settings page with sliders + advanced section",
+      "HashRouter: /#/chat/seed-kira renders Chat with composer (data-testid='message-composer')",
+      "Settings Diagnóstico section: data-testid='diag-api-url' = https://deepseek-roleplay.preview.emergentagent.com, model = deepseek-v4-flash",
+      "Streaming toggle data-testid='streaming-toggle' present, default state=checked",
+      "Streaming ON: 8 progressive text-length growth steps observed in ~2.5s (typewriter effect confirmed)",
+      "Streaming OFF (after toggle): only 2 growth steps (single large jump) — confirms non-streaming path",
+      "Continuar button (data-testid='continue-chat-button') still appears after AI reply",
+      "config.js logs '[config] API base URL: https://deepseek-roleplay.preview.emergentagent.com' to console — proves env variable cascade works"
+    ]
+  },
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py /api/chat/stream correctly translates DeepSeek OpenAI-style SSE chunks into a simpler {'delta':'...'} envelope and always emits a final [DONE] even on errors — robust contract for the frontend.",
+    "CORS allow_origin_regex r'https://([a-zA-Z0-9-]+\\.)*github\\.io' covers user.github.io, custom subdomains, and the apex. allow_credentials=False is correct because frontend uses no cookies.",
+    "frontend/src/lib/api.js chatStream() is a clean async generator with AbortController support and a finally{} that cancels the reader — good cancellation semantics.",
+    "Chat.jsx flushes streaming deltas every 50ms or 25 chars — keeps React renders manageable while feeling live.",
+    "Empty-stream handling: Chat.jsx strips the placeholder bubble and toasts 'respuesta vacía' if finalContent is empty — addresses the iter2 flaky-empty-content RCA from /api/chat/continue (now applied to streaming path too).",
+    "config.js: ENV_BACKEND_URL prefers REACT_APP_API_BASE_URL over REACT_APP_BACKEND_URL — good for GH Pages CI/CD without breaking existing Emergent env.",
+    "Minor: server.py event_generator has sent_done flag but the finally always emits [DONE] when not sent — correct guard against partial-line buffers.",
+    "Note: behavioral change — ALL DeepSeek calls now default to thinking:{type:disabled} via payload.setdefault. Intentional per task description; verified non-streaming endpoints still return high-quality content."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration3.py (new)"
+  ],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (all flows pass)"},
+  "test_credentials": "Not applicable — app is localStorage-only with no auth.",
+  "seed_data_creation": "Used the auto-seeded 'seed-kira' character. Frontend reset between streaming-on and streaming-off tests via fresh send.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 7 regression endpoints + new /api/chat/stream pass. The only header caveat (X-Accel-Buffering stripped by Cloudflare on the preview URL) does NOT affect functionality — streaming chunks arrive at the client just fine. For typewriter verification I polled the largest text-block length inside [data-testid='messages-scroll-area'] every 250ms and counted distinct values (streaming->8 steps, non-streaming->2 steps). Use /#/chat/seed-kira (with hash) — old /chat/seed-kira URL is now invalid under HashRouter. iteration_3 tests live at /app/backend/tests/test_iteration3.py; reuse for any future regression."
+}

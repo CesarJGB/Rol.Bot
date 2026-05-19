@@ -6,6 +6,7 @@ summarization, and memory-extraction requests to DeepSeek.
 """
 
 from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 import os
@@ -84,6 +85,11 @@ class EmotionRequest(BaseModel):
 async def deepseek_call(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not DEEPSEEK_API_KEY:
         raise HTTPException(status_code=500, detail="DEEPSEEK_API_KEY not configured")
+
+    # DeepSeek V4 Flash defaults to "thinking" mode which produces reasoning_content
+    # tokens before the visible response. For roleplay UX we want immediate output,
+    # so we disable thinking unless the caller explicitly opts in.
+    payload.setdefault("thinking", {"type": "disabled"})
 
     url = f"{DEEPSEEK_BASE_URL}/chat/completions"
     headers = {
@@ -484,12 +490,121 @@ async def update_emotion(req: EmotionRequest):
         return {"state": current}
 
 
+@api_router.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """Streaming chat completion. Forwards DeepSeek SSE chunks to the client as
+    server-sent events with {"delta": "..."} payloads, ending with "[DONE]".
+
+    The frontend uses a fetch ReadableStream reader (see lib/api.js -> chatStream).
+    After streaming, the frontend can detect cut-off and request continuation."""
+    if not DEEPSEEK_API_KEY:
+        raise HTTPException(status_code=500, detail="DEEPSEEK_API_KEY not configured")
+
+    payload = {
+        "model": DEEPSEEK_MODEL,
+        "messages": [m.model_dump() for m in req.messages],
+        "temperature": req.temperature,
+        "max_tokens": req.max_tokens,
+        "presence_penalty": req.presence_penalty,
+        "frequency_penalty": req.frequency_penalty,
+        "top_p": req.top_p,
+        "stream": True,
+        # Disable thinking for snappy streaming (no reasoning preamble).
+        "thinking": {"type": "disabled"},
+    }
+    if req.stop:
+        payload["stop"] = req.stop
+
+    url = f"{DEEPSEEK_BASE_URL}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    async def event_generator():
+        sent_done = False
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+                async with client.stream("POST", url, json=payload, headers=headers) as resp:
+                    if resp.status_code >= 400:
+                        err_bytes = await resp.aread()
+                        try:
+                            err_text = err_bytes.decode("utf-8", errors="ignore")
+                        except Exception:
+                            err_text = str(err_bytes)
+                        yield f"data: {json.dumps({'error': f'upstream {resp.status_code}: {err_text[:200]}'})}\n\n"
+                        yield "data: [DONE]\n\n"
+                        sent_done = True
+                        return
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            yield "data: [DONE]\n\n"
+                            sent_done = True
+                            return
+                        try:
+                            obj = json.loads(data)
+                            delta = obj.get("choices", [{}])[0].get("delta", {}).get("content")
+                            if delta:
+                                yield f"data: {json.dumps({'delta': delta})}\n\n"
+                        except json.JSONDecodeError:
+                            continue
+        except httpx.RequestError as e:
+            yield f"data: {json.dumps({'error': f'network: {str(e)[:120]}'})}\n\n"
+        finally:
+            if not sent_done:
+                yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",  # disable proxy buffering (nginx, etc.)
+            "Connection": "keep-alive",
+        },
+    )
+
+
 app.include_router(api_router)
+
+# ---------------------------------------------------------------------------
+# CORS — qué orígenes pueden hablar con este backend.
+# ---------------------------------------------------------------------------
+# Edita CORS_ORIGINS en backend/.env para producción. Por defecto, cualquier
+# subdominio *.github.io está permitido (regex) además de localhost.
+#
+# Ejemplo backend/.env:
+#   CORS_ORIGINS="https://usuario.github.io,https://mi-dominio.com"
+#
+# El símbolo "*" se acepta como comodín total (no recomendado en producción
+# si usas cookies o auth — aquí no usamos ninguna así que es seguro).
+# ---------------------------------------------------------------------------
+_raw_origins = os.environ.get("CORS_ORIGINS", "*")
+_origins_list = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+_allow_all = "*" in _origins_list
+
+# Siempre incluimos localhost para desarrollo, no importa lo que diga el .env.
+_dev_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+for o in _dev_origins:
+    if o not in _origins_list:
+        _origins_list.append(o)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_credentials=False,  # No cookies → mantenemos credentials off para no chocar con allow_origins="*"
+    allow_origins=["*"] if _allow_all else _origins_list,
+    # Permite cualquier *.github.io aunque no esté listado explícitamente.
+    allow_origin_regex=r"https://([a-zA-Z0-9-]+\.)*github\.io",
     allow_methods=["*"],
     allow_headers=["*"],
 )

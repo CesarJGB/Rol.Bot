@@ -1,6 +1,10 @@
 import React from "react";
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+// HashRouter funciona en cualquier hosting estático (GitHub Pages, S3, etc.)
+// sin necesidad de configurar redirecciones del servidor para rutas SPA.
+// Si prefieres URLs limpias en un servidor que las soporta (Vercel, Netlify),
+// reemplaza HashRouter por BrowserRouter con basename={ROUTER_BASENAME}.
+import { HashRouter, Routes, Route } from "react-router-dom";
 import { AppProvider } from "@/context/AppContext";
 import Gallery from "@/pages/Gallery";
 import CharacterEditor from "@/pages/CharacterEditor";
@@ -13,7 +17,7 @@ function App() {
   return (
     <div className="App">
       <AppProvider>
-        <BrowserRouter>
+        <HashRouter>
           <Routes>
             <Route path="/" element={<Gallery />} />
             <Route path="/character/new" element={<CharacterEditor />} />
@@ -22,7 +26,7 @@ function App() {
             <Route path="/profile" element={<Profile />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
-        </BrowserRouter>
+        </HashRouter>
         <Toaster
           theme="dark"
           position="top-center"

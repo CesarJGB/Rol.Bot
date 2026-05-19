@@ -8,7 +8,8 @@ import { SceneSheet } from "../components/SceneSheet";
 import { MemorySheet } from "../components/MemorySheet";
 import { ChatsSheet } from "../components/ChatsSheet";
 import { buildSystemPrompt, buildMessages, stylingToParams } from "../lib/prompt";
-import { chatComplete, chatRegenerate, chatContinue, extractMemories, summarizeChat, updateEmotion } from "../lib/api";
+import { chatComplete, chatStream, chatRegenerate, chatContinue, extractMemories, summarizeChat, updateEmotion } from "../lib/api";
+import { looksCutOff } from "../lib/textUtil";
 import { DEFAULT_EMOTION } from "../lib/constants";
 import { toast } from "sonner";
 
@@ -41,8 +42,10 @@ export default function Chat() {
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [chatsOpen, setChatsOpen] = useState(false);
   const [streamingPlaceholder, setStreamingPlaceholder] = useState(false);
+  const [streamingMsgId, setStreamingMsgId] = useState(null);
 
   const scrollerRef = useRef(null);
+  const abortRef = useRef(null);
 
   // Ensure character has an active session.
   useEffect(() => {
@@ -66,7 +69,7 @@ export default function Chat() {
     if (scrollerRef.current) {
       scrollerRef.current.scrollTo({ top: scrollerRef.current.scrollHeight, behavior: "smooth" });
     }
-  }, [session?.messages?.length, streamingPlaceholder, session?.id]);
+  }, [session?.messages?.length, streamingPlaceholder, streamingMsgId, session?.id]);
 
   const currentParams = useMemo(() => stylingToParams(settings), [settings]);
 
@@ -157,26 +160,111 @@ export default function Chat() {
     if (!text || busy || !character || !session) return;
 
     const userMsg = newMessage("user", text);
-    const nextMessages = [...(session.messages || []), userMsg];
-    updateActiveSession(characterId, (s) => ({ ...s, messages: nextMessages }));
+    const aiMsg = newMessage("assistant", "");
+    const messagesWithUser = [...(session.messages || []), userMsg];
+    const messagesWithAI = [...messagesWithUser, aiMsg];
+
+    updateActiveSession(characterId, (s) => ({ ...s, messages: messagesWithAI }));
     setInput("");
     setBusy(true);
-    setStreamingPlaceholder(true);
+    setStreamingMsgId(aiMsg.id);
+
+    const useStreaming = settings.streamingEnabled !== false;
+    let finalContent = "";
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
-      const payload = buildPayload(nextMessages);
-      const content = await chatComplete(payload);
-      const aiMsg = newMessage("assistant", content);
-      const updatedMessages = [...nextMessages, aiMsg];
-      updateActiveSession(characterId, (s) => ({ ...s, messages: updatedMessages }));
+      const payload = buildPayload(messagesWithUser);
 
-      runBackgroundUpdates(updatedMessages, session.summary, session.memories, session.emotion);
+      if (useStreaming) {
+        // Accumulate streamed deltas, flushing into state in small batches.
+        let buffer = "";
+        let lastFlush = Date.now();
+        for await (const delta of chatStream(payload, { signal: controller.signal })) {
+          finalContent += delta;
+          buffer += delta;
+          const now = Date.now();
+          // Flush ~every 50ms or 25 chars to keep React updates manageable.
+          if (now - lastFlush > 50 || buffer.length > 25) {
+            const snapshot = finalContent;
+            updateActiveSession(characterId, (s) => {
+              const msgs = [...s.messages];
+              const idx = msgs.findIndex(m => m.id === aiMsg.id);
+              if (idx >= 0) msgs[idx] = { ...msgs[idx], content: snapshot };
+              return { ...s, messages: msgs };
+            });
+            buffer = "";
+            lastFlush = now;
+          }
+        }
+        // Final flush.
+        if (buffer.length > 0) {
+          const snapshot = finalContent;
+          updateActiveSession(characterId, (s) => {
+            const msgs = [...s.messages];
+            const idx = msgs.findIndex(m => m.id === aiMsg.id);
+            if (idx >= 0) msgs[idx] = { ...msgs[idx], content: snapshot };
+            return { ...s, messages: msgs };
+          });
+        }
+
+        // If stream got cut off mid-thought, request a silent continuation.
+        if (finalContent && looksCutOff(finalContent)) {
+          try {
+            const contPayload = {
+              ...buildPayload([...messagesWithUser, { ...aiMsg, content: finalContent }]),
+              max_tokens: 200,
+            };
+            const tail = await chatContinue(contPayload);
+            if (tail && tail.trim()) {
+              const glue = /[\s\n]$/.test(finalContent) || /^[ ,.!?*"\)\]]/.test(tail) ? "" : " ";
+              finalContent = finalContent + glue + tail;
+              updateActiveSession(characterId, (s) => {
+                const msgs = [...s.messages];
+                const idx = msgs.findIndex(m => m.id === aiMsg.id);
+                if (idx >= 0) msgs[idx] = { ...msgs[idx], content: finalContent };
+                return { ...s, messages: msgs };
+              });
+            }
+          } catch { /* keep original */ }
+        }
+      } else {
+        // Fallback: non-streaming (auto-continue happens server-side).
+        finalContent = await chatComplete(payload);
+        updateActiveSession(characterId, (s) => {
+          const msgs = [...s.messages];
+          const idx = msgs.findIndex(m => m.id === aiMsg.id);
+          if (idx >= 0) msgs[idx] = { ...msgs[idx], content: finalContent };
+          return { ...s, messages: msgs };
+        });
+      }
+
+      if (!finalContent.trim()) {
+        // Empty response — strip the placeholder so we don't leave an empty bubble.
+        updateActiveSession(characterId, (s) => ({ ...s, messages: s.messages.filter(m => m.id !== aiMsg.id) }));
+        toast.error("El modelo devolvió una respuesta vacía. Inténtalo de nuevo.");
+        return;
+      }
+
+      // Background updates use the final settled state.
+      const settled = [...messagesWithUser, { ...aiMsg, content: finalContent }];
+      runBackgroundUpdates(settled, session.summary, session.memories, session.emotion);
     } catch (err) {
-      console.error(err);
-      toast.error("No se pudo contactar con el modelo. Revisa tu clave de DeepSeek.");
+      if (err.name === "AbortError") {
+        // user-cancelled — leave the partial.
+      } else {
+        console.error(err);
+        toast.error("No se pudo contactar con el modelo. Revisa tu clave de DeepSeek.");
+        // Remove the empty AI placeholder if nothing arrived.
+        if (!finalContent) {
+          updateActiveSession(characterId, (s) => ({ ...s, messages: s.messages.filter(m => m.id !== aiMsg.id) }));
+        }
+      }
     } finally {
       setBusy(false);
-      setStreamingPlaceholder(false);
+      setStreamingMsgId(null);
+      abortRef.current = null;
     }
   };
 
@@ -408,6 +496,11 @@ export default function Chat() {
 
           {messages.map((m, idx) => {
             const isLastAI = m.role === "assistant" && idx === messages.length - 1;
+            const isStreamingThis = streamingMsgId === m.id;
+            // Skip rendering the streaming bubble while it has no content yet —
+            // we'll show the dots placeholder below instead. Once any delta has
+            // arrived, render normally so the typewriter effect is visible.
+            if (isStreamingThis && (!m.content || m.content.length === 0)) return null;
             return (
               <MessageBubble
                 key={m.id}
@@ -438,7 +531,7 @@ export default function Chat() {
             </div>
           )}
 
-          {streamingPlaceholder && (
+          {(streamingPlaceholder || (streamingMsgId && !messages.find(m => m.id === streamingMsgId)?.content)) && (
             <div className="flex gap-3 anim-fade-up">
               <div className="shrink-0 w-9 h-9 rounded-full overflow-hidden border border-white/[0.08] bg-[#111111]">
                 {character.avatar && <img src={character.avatar} alt="" className="w-full h-full object-cover" />}
@@ -450,7 +543,7 @@ export default function Chat() {
           )}
 
           {/* "Continuar chat" — visible when there are messages and we're idle. */}
-          {!streamingPlaceholder && messages.length >= 1 && messages[messages.length - 1]?.role === "assistant" && (
+          {!busy && !streamingMsgId && messages.length >= 1 && messages[messages.length - 1]?.role === "assistant" && (
             <div className="flex justify-center pt-1">
               <button
                 data-testid="continue-chat-button"
