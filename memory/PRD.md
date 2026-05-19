@@ -58,9 +58,23 @@ Build a modern AI roleplay web app optimized for DeepSeek V4 Flash with a high-q
 - **Emotional state**: 5-axis tracker (trust/affection/tension/fear/hostility) updated by `/api/chat/emotion` and shown as bars in MemorySheet. Hidden directives in system prompt reflect the state.
 - **Settings**: new `maxMemoriesPerTurn` slider for token budget control.
 
+## Iteration 3 (2026-02) — Streaming + deployment refactor
+- **Streaming SSE (P1)**: new `/api/chat/stream` endpoint forwards DeepSeek's SSE chunks as `{delta: "..."}` events. Frontend uses `fetch` ReadableStream + async generator. Chat bubble fills in token-by-token (~50ms flush throttling). Toggle to disable in Settings.
+- **Thinking mode disabled by default**: DeepSeek V4 Flash's `thinking: {type: "disabled"}` is auto-set on all backend calls — eliminates ~2-5s reasoning preamble for instant streaming UX.
+- **Deployment refactor**:
+  - `frontend/src/config.js` — ÚNICA URL configurable. Reads `REACT_APP_API_BASE_URL` (preferred) or `REACT_APP_BACKEND_URL` (legacy), falls back to `http://localhost:8001`.
+  - `frontend/src/lib/constants.js` and `api.js` now import from config (no hardcoded URLs anywhere).
+  - Backend CORS expanded: explicit localhost dev origins + `allow_origin_regex` for `*.github.io`.
+  - **HashRouter** in App.js → works on any static host (GitHub Pages, S3, etc.) without server-side SPA redirect config.
+  - `public/404.html` SPA fallback for custom-domain deployments.
+  - `.env.example` files for both frontend and backend.
+  - `/app/README.md` — complete deployment guide (local + Render + GitHub Pages).
+- **Settings → Diagnóstico section**: shows current API base URL + model. Useful to verify which backend you're hitting.
+- localStorage logic untouched (no migration needed; iter2 multi-session shape preserved).
+
 ## Backlog / next priorities
-- P1: SSE streaming responses (typewriter effect).
 - P1: Per-session emotional state graphs over time.
 - P2: Share characters via URL-encoded JSON.
-- P2: Voice input (Web Speech API).
+- P2: Character daily-journal feature (auto-generated diary entries from the character's POV).
 - P2: Group roleplay with multiple AIs in one chat.
+- P2: Voice input (Web Speech API).
