@@ -191,6 +191,10 @@ export default function Chat() {
     try {
       const payload = buildPayload(messages);
       const content = await chatContinue(payload);
+      if (!content || !content.trim()) {
+        toast.error("El modelo devolvió una respuesta vacía. Inténtalo de nuevo.");
+        return;
+      }
       const aiMsg = newMessage("assistant", content);
       const updatedMessages = [...messages, aiMsg];
       updateActiveSession(characterId, (s) => ({ ...s, messages: updatedMessages }));

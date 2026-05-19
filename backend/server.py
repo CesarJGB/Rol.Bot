@@ -316,6 +316,18 @@ async def chat_continue(req: ContinueRequest):
         content = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError):
         raise HTTPException(status_code=502, detail="Malformed DeepSeek response")
+
+    # Guard against empty content from DeepSeek (rare upstream hiccup): retry once with higher temp.
+    if not content or not content.strip():
+        retry_payload = dict(payload)
+        retry_payload["temperature"] = min(1.5, payload["temperature"] + 0.2)
+        try:
+            data2 = await deepseek_call(retry_payload)
+            content = data2["choices"][0]["message"]["content"]
+        except Exception:
+            pass
+        if not content or not content.strip():
+            raise HTTPException(status_code=502, detail="Empty continuation from model")
     return {"content": content}
 
 

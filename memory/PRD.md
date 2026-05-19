@@ -42,10 +42,25 @@ Build a modern AI roleplay web app optimized for DeepSeek V4 Flash with a high-q
 ## What's been implemented (2026-02)
 - Full app per spec. Functional end-to-end with real DeepSeek V4 Flash.
 
+## Iteration 2 (2026-02) — Spanish UI + multi-chat + memory upgrades
+- Complete Spanish translation across Gallery, Chat, CharacterEditor, Profile, Settings, MessageBubble, MemorySheet, SceneSheet, ChatsSheet, toasts.
+- **Multi-chat per character**: each character now has `sessions[]` with `activeSessionId`. Create / rename / switch / delete sessions via new ChatsSheet. Backward-compatible auto-migration of old single-chat localStorage shape (no data loss).
+- **"Continuar" button**: advances the scene with a new beat, distinct from regenerate. New `/api/chat/continue` endpoint.
+- **Edit-after-delete bug fixed**: editing a user message ALWAYS trims subsequent + auto-regenerates a fresh AI reply, regardless of whether AI replies were previously deleted.
+- **Cut-off auto-continuation**: backend detects `finish_reason=length` or no terminal punctuation / unbalanced asterisks → silently requests a continuation and glues it. Backend now also retries empty continuations.
+- **Graduated regeneration**: attempt 1 → mild directive, attempt 2 → strong (reverse emotion, different beat), attempt 3+ → extreme (unexpected choice, tone shift). `avoid_phrases` sent so the model sees prior openings.
+- **Memory upgrades**:
+  - Pinned memories (★) always included in prompt with high priority.
+  - Memory objects: `{id, text, pinned, createdAt}`. Auto-migrated from old strings.
+  - Contextual retrieval: `selectMemories()` ranks by keyword overlap with last user/assistant turns; pinned always first; capped by `maxMemoriesPerTurn` setting.
+- **Rolling summary**: now updates every 8 messages (was 12), weighted toward recent events with explicit instructions.
+- **Memory extraction**: more aggressive prompt; runs every 4 messages (was 6); deduplicated; caps at 80 unpinned + all pinned.
+- **Emotional state**: 5-axis tracker (trust/affection/tension/fear/hostility) updated by `/api/chat/emotion` and shown as bars in MemorySheet. Hidden directives in system prompt reflect the state.
+- **Settings**: new `maxMemoriesPerTurn` slider for token budget control.
+
 ## Backlog / next priorities
-- P1: Streaming responses (SSE) for faster perceived latency.
-- P1: Theme picker (light variant for daytime use).
-- P2: Multiple chats per character (currently 1 chat per character).
-- P2: Character community / share import URL.
-- P2: Voice input via Web Speech API.
-- P2: Group roleplay (>1 character in one chat).
+- P1: SSE streaming responses (typewriter effect).
+- P1: Per-session emotional state graphs over time.
+- P2: Share characters via URL-encoded JSON.
+- P2: Voice input (Web Speech API).
+- P2: Group roleplay with multiple AIs in one chat.
