@@ -263,18 +263,20 @@ async def chat_regenerate(req: ChatRequest):
     else:
         msgs.insert(0, {"role": "system", "content": instruction})
 
-    # Escalate sampling pressure with attempt.
-    temp_boost = 0.25 + (attempt - 1) * 0.2  # 0.25, 0.45, 0.65, 0.85...
-    pres_boost = 0.1 + (attempt - 1) * 0.15
-    freq_boost = 0.05 + (attempt - 1) * 0.15
+    # CAMBIO 2: Escalado de sampling más conservador para evitar incoherencias en regen alto.
+    # Antes: temp llegaba a 1.7, penalties a 2.0 — causaba texto en idiomas extraños.
+    # Ahora: techo de 1.25 / 1.2 / 1.2 — sigue siendo variado pero coherente.
+    temp_boost = 0.15 + (attempt - 1) * 0.10   # 0.15, 0.25, 0.35, 0.45...
+    pres_boost = 0.05 + (attempt - 1) * 0.08
+    freq_boost = 0.03 + (attempt - 1) * 0.07
 
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": msgs,
-        "temperature": min(1.7, (req.temperature or 0.85) + temp_boost),
+        "temperature": min(1.25, (req.temperature or 0.85) + temp_boost),
         "max_tokens": req.max_tokens,
-        "presence_penalty": min(2.0, (req.presence_penalty or 0.7) + pres_boost),
-        "frequency_penalty": min(2.0, (req.frequency_penalty or 0.45) + freq_boost),
+        "presence_penalty": min(1.2, (req.presence_penalty or 0.7) + pres_boost),
+        "frequency_penalty": min(1.2, (req.frequency_penalty or 0.45) + freq_boost),
         "top_p": min(1.0, (req.top_p or 0.95)),
         "stream": False,
     }
@@ -391,24 +393,25 @@ async def summarize(req: SummarizeRequest):
 
 @api_router.post("/chat/extract-memories")
 async def extract_memories(req: MemoryRequest):
-    """Extract durable facts. Aggressive about finding NEW info; dedupes against existing."""
+    """Extract only the most essential durable facts. Very selective to avoid memory bloat."""
     history_text = "\n".join(f"{m.role.upper()}: {m.content}" for m in req.messages)
     existing = "\n".join(f"- {m}" for m in (req.existing_memories or []))
+
+    # CAMBIO 3: Prompt mucho más selectivo — por defecto no guarda nada,
+    # solo guarda si el hecho es realmente irreversible e importante.
+    # Antes pedía "CAPTURE every NEW or CHANGED" con 8 categorías → generaba memorias en casi cada turno.
     sys = (
-        "You extract durable, character-relevant facts from a roleplay exchange.\n"
-        "Return ONLY a JSON array of short strings (each max 14 words).\n"
-        "CAPTURE every NEW or CHANGED:\n"
-        "- names, ages, pronouns, identities\n"
-        "- relationships (who is what to whom, and the emotional quality)\n"
-        "- promises, commitments, shared secrets\n"
-        "- fears, desires, goals, deal-breakers\n"
-        "- important events that just happened (kisses, fights, revelations, gifts, deaths, decisions)\n"
-        "- shifts in trust, affection, or hostility\n"
-        "- new locations or scene changes that matter\n"
-        "Each memory should READ as a short third-person fact (e.g. 'Promised to meet Kira at the docks tomorrow at dusk').\n"
-        "DO NOT include: weather details, small talk, anything already in the existing list.\n"
-        "If genuinely nothing new is worth saving, return [].\n"
-        "Output JSON only. No prose. No code fences. No keys, just an array."
+        "You extract ONLY the most essential, durable facts from a roleplay exchange.\n"
+        "Return a JSON array of short strings (each max 12 words). Be VERY selective — aim for 0-3 items max.\n"
+        "Only capture:\n"
+        "- Explicit promises or commitments made between characters\n"
+        "- Critical secrets revealed for the first time\n"
+        "- Named characters introduced with their role/relationship\n"
+        "- Major irreversible events (death, confession, betrayal, breakup, first kiss)\n"
+        "IGNORE: emotional shifts, atmosphere, scene descriptions, small talk, "
+        "anything already in existing memories, anything that could change next turn.\n"
+        "When in doubt, leave it out. Return [] freely — not every exchange needs a memory.\n"
+        "Output JSON only. No prose. No code fences. Just an array."
     )
     user = (
         f"Character: {req.character_name}\n\n"
@@ -422,7 +425,7 @@ async def extract_memories(req: MemoryRequest):
             {"role": "user", "content": user},
         ],
         "temperature": 0.35,
-        "max_tokens": 320,
+        "max_tokens": 160,   # era 320
         "stream": False,
     }
     data = await deepseek_call(payload)
@@ -591,15 +594,6 @@ app.include_router(api_router)
 # ---------------------------------------------------------------------------
 # CORS — qué orígenes pueden hablar con este backend.
 # ---------------------------------------------------------------------------
-# Edita CORS_ORIGINS en backend/.env para producción. Por defecto, cualquier
-# subdominio *.github.io está permitido (regex) además de localhost.
-#
-# Ejemplo backend/.env:
-#   CORS_ORIGINS="https://usuario.github.io,https://mi-dominio.com"
-#
-# El símbolo "*" se acepta como comodín total (no recomendado en producción
-# si usas cookies o auth — aquí no usamos ninguna así que es seguro).
-# ---------------------------------------------------------------------------
 _raw_origins = os.environ.get("CORS_ORIGINS", "*")
 _origins_list = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 _allow_all = "*" in _origins_list
@@ -617,9 +611,8 @@ for o in _dev_origins:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=False,  # No cookies → mantenemos credentials off para no chocar con allow_origins="*"
+    allow_credentials=False,
     allow_origins=["*"] if _allow_all else _origins_list,
-    # Permite cualquier *.github.io aunque no esté listado explícitamente.
     allow_origin_regex=r"https://([a-zA-Z0-9-]+\.)*github\.io",
     allow_methods=["*"],
     allow_headers=["*"],
