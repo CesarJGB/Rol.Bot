@@ -75,7 +75,7 @@ const tokenize = (text) => {
   return new Set(cleaned.split(/\s+/).filter(t => t && t.length > 2 && !STOPWORDS.has(t)));
 };
 
-export const selectMemories = (memories, history, maxCount = 8) => {
+export const selectMemories = (memories, history, maxCount = 4) => {
   if (!memories || memories.length === 0) return [];
   // Normalize: array of {id, text, pinned, ...}
   const normalized = memories.map(m => (typeof m === "string" ? { text: m, pinned: false } : m));
@@ -128,7 +128,8 @@ export const buildSystemPrompt = ({ character, scene, profile, settings, summary
 - Evita los muros de texto. Evita repetir frases, gestos o ritmos entre turnos.
 - Usa *cursivas* para acción/descripción y texto normal para el diálogo hablado.
 - A veces responde sólo con un gesto, un silencio, un respiro contenido, una línea interrumpida. La gente real hace eso.
-- Evita el positivismo constante, evita el tono de asistente, evita sobreexplicar.`
+- Evita el positivismo constante, evita el tono de asistente, evita sobreexplicar.
+- Si la escena incluye otros personajes (familiares, amigos, extraños), puedes darles una línea breve o describir su acción, pero SIEMPRE desde tu perspectiva como ${character.name}. Nunca cambies de narrador ni adoptes otro personaje como voz principal sostenida. Ejemplo correcto: *Mamá asoma por la puerta* "La cena está lista", lo deja caer sin mirarnos. — Ejemplo incorrecto: ponerte a hablar como ese otro personaje en primera persona de forma extendida.`
   );
 
   const id = formatBlock("Identidad", character.personality);
@@ -162,15 +163,16 @@ export const buildSystemPrompt = ({ character, scene, profile, settings, summary
     blocks.push(`### Sobre el usuario (con quien hablas)\n${p.join("\n")}\nReacciona y adáptate a quién es. Notálo.`);
   }
 
-  // CONTEXTUAL memory retrieval (not all memories every turn).
-  const relevantMemories = selectMemories(memories, history, settings?.maxMemoriesPerTurn || 8);
+  // CAMBIO: maxCount reducido de 8 a 4 por defecto para ahorrar tokens.
+  const relevantMemories = selectMemories(memories, history, settings?.maxMemoriesPerTurn || 4);
   if (relevantMemories && relevantMemories.length > 0) {
     const lines = relevantMemories.map(m => {
       const text = typeof m === "string" ? m : m.text;
       const tag = (m.pinned ? "★ " : "");
       return `- ${tag}${text}`;
     });
-    blocks.push(`### Recuerdos relevantes (★ = fijados, prioridad alta)\n${lines.join("\n")}`);
+    // CAMBIO: etiqueta más corta, sin explicación redundante.
+    blocks.push(`### Recuerdos\n${lines.join("\n")}`);
   }
 
   // Summary
