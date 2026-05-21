@@ -144,7 +144,7 @@ export default function Chat() {
           }
           // Cap: keep all pinned + last 80 unpinned.
           const pinned = merged.filter(m => m.pinned);
-          const unpinned = merged.filter(m => !m.pinned).slice(-80);
+          const unpinned = merged.filter(m => !m.pinned).slice(-30);
           next.memories = [...pinned, ...unpinned];
         }
         if (r.kind === "emotion" && r.value) next.emotion = r.value;
