@@ -163,7 +163,7 @@ export const buildSystemPrompt = ({ character, scene, profile, settings, summary
     blocks.push(`### Sobre el usuario (con quien hablas)\n${p.join("\n")}\nReacciona y adáptate a quién es. Notálo.`);
   }
 
-  // CAMBIO: maxCount reducido de 8 a 4 por defecto para ahorrar tokens.
+  // Contextual memory retrieval (not all memories every turn).
   const relevantMemories = selectMemories(memories, history, settings?.maxMemoriesPerTurn || 4);
   if (relevantMemories && relevantMemories.length > 0) {
     const lines = relevantMemories.map(m => {
@@ -171,13 +171,14 @@ export const buildSystemPrompt = ({ character, scene, profile, settings, summary
       const tag = (m.pinned ? "★ " : "");
       return `- ${tag}${text}`;
     });
-    // CAMBIO: etiqueta más corta, sin explicación redundante.
     blocks.push(`### Recuerdos\n${lines.join("\n")}`);
   }
 
-  // Summary
+  // FIX: Summary con cap duro de 600 chars (~150 tokens) para evitar que crezca sin límite.
   if (summary && summary.trim()) {
-    blocks.push(`### Historia hasta aquí (resumen)\n${summary.trim()}`);
+    const raw = summary.trim();
+    const capped = raw.length > 600 ? raw.slice(0, 600) + "…" : raw;
+    blocks.push(`### Historia hasta aquí (resumen)\n${capped}`);
   }
 
   // Emotional state
@@ -204,8 +205,27 @@ export const buildSystemPrompt = ({ character, scene, profile, settings, summary
   return blocks.join("\n\n");
 };
 
+// FIX: Estimador de tokens y recorte dinámico del historial.
+// ~4 chars por token es suficientemente preciso para mantener margen seguro.
+// DeepSeek V4 Flash tiene contexto de 16k; usamos 14k como techo conservador
+// y reservamos 500 tokens para la respuesta del modelo.
+const estimateTokens = (text) => Math.ceil((text || "").length / 4);
+
 export const buildMessages = ({ systemPrompt, history, shortHistory = 8 }) => {
-  const sliced = history.slice(-shortHistory);
+  const TOKEN_BUDGET = 14000;
+  const RESPONSE_RESERVE = 500;
+  const available = TOKEN_BUDGET - RESPONSE_RESERVE - estimateTokens(systemPrompt);
+
+  // Empezar con shortHistory mensajes y quitar los más viejos hasta que quepa.
+  // Siempre conservamos al menos los 2 últimos mensajes para no mandar un historial vacío.
+  let sliced = history.slice(-shortHistory);
+
+  while (sliced.length > 2) {
+    const totalHistory = sliced.reduce((acc, m) => acc + estimateTokens(m.content), 0);
+    if (totalHistory <= available) break;
+    sliced = sliced.slice(1); // quitar el mensaje más viejo
+  }
+
   return [
     { role: "system", content: systemPrompt },
     ...sliced.map(m => ({
@@ -216,5 +236,5 @@ export const buildMessages = ({ systemPrompt, history, shortHistory = 8 }) => {
 };
 
 // Exposed for tests/debug (not used in UI directly).
-export const __test = { tokenize, scoreMemory };
+export const __test = { tokenize, scoreMemory, estimateTokens };
 export { EMOTION_LABELS_ES };
