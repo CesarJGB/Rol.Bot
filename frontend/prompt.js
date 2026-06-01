@@ -48,8 +48,6 @@ const emotionToDirective = (e) => {
 };
 
 // --- Contextual memory retrieval ---
-// Pinned memories are always included. The rest are ranked by simple keyword overlap
-// with the current "intent" (last user message + last 2 assistant lines).
 const scoreMemory = (memText, intentTokens) => {
   if (!intentTokens.size) return 0;
   const memTokens = tokenize(memText);
@@ -70,20 +68,15 @@ const STOPWORDS = new Set([
 const tokenize = (text) => {
   if (!text) return new Set();
   const lower = text.toLowerCase();
-  // Strip *italics* markers and punctuation.
   const cleaned = lower.replace(/\*/g, " ").replace(/[^a-z0-9áéíóúñü\s]/gi, " ");
   return new Set(cleaned.split(/\s+/).filter(t => t && t.length > 2 && !STOPWORDS.has(t)));
 };
 
 export const selectMemories = (memories, history, maxCount = 4) => {
   if (!memories || memories.length === 0) return [];
-  // Normalize: array of {id, text, pinned, ...}
   const normalized = memories.map(m => (typeof m === "string" ? { text: m, pinned: false } : m));
-
-  // Always include pinned.
   const pinned = normalized.filter(m => m.pinned);
 
-  // Build intent from last user message + last 2 assistant outputs.
   let intentText = "";
   if (history && history.length) {
     const tail = history.slice(-4);
@@ -93,31 +86,33 @@ export const selectMemories = (memories, history, maxCount = 4) => {
 
   const others = normalized.filter(m => !m.pinned);
   const scored = others.map(m => ({ m, s: scoreMemory(m.text, intent) }));
-  // Sort: score desc, then recency (assume order in array is creation order, last is newest).
   scored.sort((a, b) => b.s - a.s);
   const slots = Math.max(0, maxCount - pinned.length);
   const topByScore = scored.filter(x => x.s > 0).slice(0, slots).map(x => x.m);
-  // If we still have slots, fill with the most RECENT memories (end of array) not yet picked.
   const picked = new Set(topByScore.map(m => m.text));
   const recent = [...others].reverse().filter(m => !picked.has(m.text));
   while (topByScore.length < slots && recent.length) {
     topByScore.push(recent.shift());
   }
-  // Preserve pinned-first ordering.
   return [...pinned, ...topByScore].slice(0, maxCount);
 };
 
 export const buildSystemPrompt = ({ character, scene, profile, settings, summary, memories, emotion, history }) => {
-  const blocks = [];
 
-  blocks.push(
+  // -----------------------------------------------------------------------
+  // BLOQUE ESTABLE — nunca cambia entre turnos del mismo personaje.
+  // Va primero para maximizar el caché hit de DeepSeek.
+  // -----------------------------------------------------------------------
+  const stableBlocks = [];
+
+  stableBlocks.push(
 `Eres ${character.name}, un personaje ficticio en un roleplay en curso con el usuario. NO eres un asistente de IA. NO rompes el personaje bajo ninguna circunstancia. Nunca te refieres a ti como modelo de lenguaje, IA o chatbot.`
   );
 
-  blocks.push(
+  stableBlocks.push(
 `### Comportamiento esencial
 - Quédate completamente en personaje como ${character.name}.
-- Nunca hables, actúes ni decidas por el usuario. Nunca narres los pensamientos del usuario.
+- NUNCA hables, actúes, pienses ni decidas por el usuario. NUNCA narres las acciones o pensamientos del usuario.
 - Nunca rompas la cuarta pared.
 - Haz avanzar la escena gradualmente. Deja espacio para que el usuario participe.
 - Tienes defectos, contradicciones, estados de ánimo. Muéstralos.
@@ -129,71 +124,33 @@ export const buildSystemPrompt = ({ character, scene, profile, settings, summary
 - Usa *cursivas* para acción/descripción y texto normal para el diálogo hablado.
 - A veces responde sólo con un gesto, un silencio, un respiro contenido, una línea interrumpida. La gente real hace eso.
 - Evita el positivismo constante, evita el tono de asistente, evita sobreexplicar.
-- Si la escena incluye otros personajes (familiares, amigos, extraños), puedes darles una línea breve o describir su acción, pero SIEMPRE desde tu perspectiva como ${character.name}. Nunca cambies de narrador ni adoptes otro personaje como voz principal sostenida. Ejemplo correcto: *Mamá asoma por la puerta* "La cena está lista", lo deja caer sin mirarnos. — Ejemplo incorrecto: ponerte a hablar como ese otro personaje en primera persona de forma extendida.`
+- PERSONAJES SECUNDARIOS: Si hay otros personajes en la escena (familiares, amigos, extraños), encárnalos con naturalidad cuando el contexto lo requiera. Si el usuario se dirige directamente a otro personaje ("oye mamá", "¿Luna, qué piensas?", etc.), responde PRIMERO como ese personaje en primera persona durante esa interacción, luego retoma tu voz como ${character.name} si es necesario. No esperes instrucciones explícitas — da voz a los secundarios de forma fluida como lo haría un narrador de roleplay. La única regla irrompible: nunca hables ni actúes como el usuario.`
   );
 
+  // Identidad, lore, personalidad — estables por personaje.
   const id = formatBlock("Identidad", character.personality);
-  if (id) blocks.push(id);
+  if (id) stableBlocks.push(id);
   const lore = formatBlock("Mundo y lore", character.lore);
-  if (lore) blocks.push(lore);
+  if (lore) stableBlocks.push(lore);
   const style = formatBlock("Forma de hablar", character.speakingStyle);
-  if (style) blocks.push(style);
+  if (style) stableBlocks.push(style);
   const emo = formatBlock("Tendencias emocionales", character.emotionalTendencies);
-  if (emo) blocks.push(emo);
+  if (emo) stableBlocks.push(emo);
   const ex = formatBlock("Diálogo de ejemplo", character.exampleDialogues);
-  if (ex) blocks.push(ex);
+  if (ex) stableBlocks.push(ex);
 
-  // Scene
-  if (scene && (scene.location || scene.atmosphere || scene.characterEmotion || scene.current)) {
-    const sceneLines = [];
-    if (scene.current) sceneLines.push(`Escena actual: ${scene.current}`);
-    if (scene.location) sceneLines.push(`Ubicación: ${scene.location}`);
-    if (scene.atmosphere) sceneLines.push(`Atmósfera: ${scene.atmosphere}`);
-    if (scene.characterEmotion) sceneLines.push(`Tu emoción actual: ${scene.characterEmotion}`);
-    blocks.push(`### Escena\n${sceneLines.join("\n")}`);
-  }
-
-  // User profile
+  // Perfil del usuario — estable si no cambia entre sesiones.
   if (profile && (profile.name || profile.personality || profile.appearance || profile.background)) {
     const p = [];
     if (profile.name) p.push(`Nombre: ${profile.name}`);
     if (profile.appearance) p.push(`Apariencia: ${profile.appearance}`);
     if (profile.personality) p.push(`Personalidad: ${profile.personality}`);
     if (profile.background) p.push(`Trasfondo: ${profile.background}`);
-    blocks.push(`### Sobre el usuario (con quien hablas)\n${p.join("\n")}\nReacciona y adáptate a quién es. Notálo.`);
+    stableBlocks.push(`### Sobre el usuario (con quien hablas)\n${p.join("\n")}\nReacciona y adáptate a quién es. Notálo.`);
   }
 
-  // Contextual memory retrieval (not all memories every turn).
-  const relevantMemories = selectMemories(memories, history, settings?.maxMemoriesPerTurn || 4);
-  if (relevantMemories && relevantMemories.length > 0) {
-    const lines = relevantMemories.map(m => {
-      const text = typeof m === "string" ? m : m.text;
-      const tag = (m.pinned ? "★ " : "");
-      return `- ${tag}${text}`;
-    });
-    blocks.push(`### Recuerdos\n${lines.join("\n")}`);
-  }
-
-  // FIX: Summary con cap duro de 600 chars (~150 tokens) para evitar que crezca sin límite.
-  if (summary && summary.trim()) {
-    const raw = summary.trim();
-    const capped = raw.length > 600 ? raw.slice(0, 600) + "…" : raw;
-    blocks.push(`### Historia hasta aquí (resumen)\n${capped}`);
-  }
-
-  // Emotional state
-  const emoDir = emotionToDirective(emotion);
-  if (emoDir) {
-    blocks.push(`### Tu estado emocional ahora mismo\n${emoDir}`);
-  }
-
-  // Slider directives
-  const directives = stylingToDirectives(settings || {});
-  if (directives.length > 0) {
-    blocks.push(`### Dirección de estilo\n${directives.map(d => `- ${d}`).join("\n")}`);
-  }
-
-  blocks.push(
+  // Formato de salida — estable.
+  stableBlocks.push(
 `### Formato de salida
 - Usa *asteriscos* para acciones, descripciones y detalles sensoriales interiores.
 - Texto normal para el diálogo hablado.
@@ -202,13 +159,58 @@ export const buildSystemPrompt = ({ character, scene, profile, settings, summary
 - Cierra siempre tu respuesta con puntuación final (.!?…) o cerrando una acción con *. Nunca cortes una frase a la mitad.`
   );
 
-  return blocks.join("\n\n");
+  // -----------------------------------------------------------------------
+  // BLOQUE DINÁMICO — cambia cada turno, va al final.
+  // Separado del bloque estable para no invalidar el caché de DeepSeek.
+  // -----------------------------------------------------------------------
+  const dynamicBlocks = [];
+
+  // Escena actual.
+  if (scene && (scene.location || scene.atmosphere || scene.characterEmotion || scene.current)) {
+    const sceneLines = [];
+    if (scene.current) sceneLines.push(`Escena actual: ${scene.current}`);
+    if (scene.location) sceneLines.push(`Ubicación: ${scene.location}`);
+    if (scene.atmosphere) sceneLines.push(`Atmósfera: ${scene.atmosphere}`);
+    if (scene.characterEmotion) sceneLines.push(`Tu emoción actual: ${scene.characterEmotion}`);
+    dynamicBlocks.push(`### Escena\n${sceneLines.join("\n")}`);
+  }
+
+  // Memorias relevantes al contexto actual.
+  const relevantMemories = selectMemories(memories, history, settings?.maxMemoriesPerTurn || 4);
+  if (relevantMemories && relevantMemories.length > 0) {
+    const lines = relevantMemories.map(m => {
+      const text = typeof m === "string" ? m : m.text;
+      const tag = (m.pinned ? "★ " : "");
+      return `- ${tag}${text}`;
+    });
+    dynamicBlocks.push(`### Recuerdos\n${lines.join("\n")}`);
+  }
+
+  // Resumen con cap duro de 600 chars (~150 tokens).
+  if (summary && summary.trim()) {
+    const raw = summary.trim();
+    const capped = raw.length > 600 ? raw.slice(0, 600) + "…" : raw;
+    dynamicBlocks.push(`### Historia hasta aquí (resumen)\n${capped}`);
+  }
+
+  // Estado emocional dinámico.
+  const emoDir = emotionToDirective(emotion);
+  if (emoDir) {
+    dynamicBlocks.push(`### Tu estado emocional ahora mismo\n${emoDir}`);
+  }
+
+  // Directivas de estilo.
+  const directives = stylingToDirectives(settings || {});
+  if (directives.length > 0) {
+    dynamicBlocks.push(`### Dirección de estilo\n${directives.map(d => `- ${d}`).join("\n")}`);
+  }
+
+  // Estable primero (cacheable), dinámico al final.
+  return [...stableBlocks, ...dynamicBlocks].join("\n\n");
 };
 
-// FIX: Estimador de tokens y recorte dinámico del historial.
-// ~4 chars por token es suficientemente preciso para mantener margen seguro.
-// DeepSeek V4 Flash tiene contexto de 16k; usamos 14k como techo conservador
-// y reservamos 500 tokens para la respuesta del modelo.
+// Estimador de tokens y recorte dinámico del historial.
+// ~4 chars por token. Techo de 14k tokens, reservando 500 para la respuesta.
 const estimateTokens = (text) => Math.ceil((text || "").length / 4);
 
 export const buildMessages = ({ systemPrompt, history, shortHistory = 8 }) => {
@@ -217,13 +219,13 @@ export const buildMessages = ({ systemPrompt, history, shortHistory = 8 }) => {
   const available = TOKEN_BUDGET - RESPONSE_RESERVE - estimateTokens(systemPrompt);
 
   // Empezar con shortHistory mensajes y quitar los más viejos hasta que quepa.
-  // Siempre conservamos al menos los 2 últimos mensajes para no mandar un historial vacío.
+  // Siempre conservar al menos los 2 últimos para no mandar historial vacío.
   let sliced = history.slice(-shortHistory);
 
   while (sliced.length > 2) {
     const totalHistory = sliced.reduce((acc, m) => acc + estimateTokens(m.content), 0);
     if (totalHistory <= available) break;
-    sliced = sliced.slice(1); // quitar el mensaje más viejo
+    sliced = sliced.slice(1);
   }
 
   return [
@@ -235,6 +237,6 @@ export const buildMessages = ({ systemPrompt, history, shortHistory = 8 }) => {
   ];
 };
 
-// Exposed for tests/debug (not used in UI directly).
+// Exposed for tests/debug.
 export const __test = { tokenize, scoreMemory, estimateTokens };
 export { EMOTION_LABELS_ES };
