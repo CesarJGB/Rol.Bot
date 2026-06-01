@@ -47,9 +47,7 @@ class ChatRequest(BaseModel):
     top_p: Optional[float] = 0.95
     n: Optional[int] = 1
     stop: Optional[List[str]] = None
-    # For regen: 1=first regen, 2=second, etc. Strength increases.
     attempt: Optional[int] = 1
-    # Optional: avoid repeating these prior assistant outputs.
     avoid_phrases: Optional[List[str]] = None
 
 
@@ -131,7 +129,6 @@ async def deepseek_call(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 # ------------- Regen directives (graduated intensity) -------------
 
-# Mild — used on attempt #1.
 DIRECTIVES_MILD = [
     "Change your opening sentence completely. Don't start the way you did before.",
     "Take a sharply different emotional angle — restrained instead of open, or vice versa.",
@@ -141,7 +138,6 @@ DIRECTIVES_MILD = [
     "Begin mid-action. Skip pleasantries.",
 ]
 
-# Stronger — used on attempt #2.
 DIRECTIVES_STRONG = [
     "DRAMATICALLY change the emotional direction. If you were warm, be cold. If amused, be wounded. If quiet, be sharp.",
     "Take a completely different narrative beat. Don't react to what was said — react to something *else* in the scene: a sound, a memory, an object, the silence.",
@@ -151,7 +147,6 @@ DIRECTIVES_STRONG = [
     "Open with a question that catches the user off-guard. Don't answer theirs at all yet.",
 ]
 
-# Extreme — used on attempt #3+.
 DIRECTIVES_EXTREME = [
     "Completely upend the scene. Introduce something unexpected: a new sound, an interruption, a sudden mood swing, a memory triggering, a decision being made.",
     "The character makes an UNEXPECTED choice. They walk out. They confess something. They lie. They laugh inappropriately. They go silent and refuse to engage. Pick one and commit.",
@@ -164,19 +159,15 @@ DIRECTIVES_EXTREME = [
 CUT_OFF_PATTERN = re.compile(r'[.!?…»"\'\)\]\*]\s*$', re.MULTILINE)
 
 def looks_cut_off(text: str) -> bool:
-    """Detect if an assistant response was truncated by max_tokens."""
     t = text.strip()
     if not t or len(t) < 20:
         return False
-    # Unclosed action asterisks?
     if t.count("*") % 2 != 0:
         return True
-    # Doesn't end with terminal punctuation, closing quote, or end-of-action asterisk.
     return not bool(CUT_OFF_PATTERN.search(t))
 
 
 def pick_directives(attempt: int) -> str:
-    """Compose graduated regen directives."""
     bucket = DIRECTIVES_MILD if attempt <= 1 else (DIRECTIVES_STRONG if attempt == 2 else DIRECTIVES_EXTREME)
     picks = random.sample(bucket, k=min(2, len(bucket)))
     return " ".join(picks)
@@ -196,7 +187,6 @@ async def health():
 
 @api_router.post("/chat")
 async def chat(req: ChatRequest):
-    """Single-shot chat completion with auto-continuation if cut off."""
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": [m.model_dump() for m in req.messages],
@@ -217,7 +207,6 @@ async def chat(req: ChatRequest):
     except (KeyError, IndexError):
         raise HTTPException(status_code=502, detail="Malformed DeepSeek response")
 
-    # Auto-continue if response was cut off by token limit (one retry max).
     if finish_reason == "length" or looks_cut_off(content):
         cont_payload = dict(payload)
         cont_payload["messages"] = (
@@ -230,7 +219,6 @@ async def chat(req: ChatRequest):
         try:
             cdata = await deepseek_call(cont_payload)
             extra = cdata["choices"][0]["message"]["content"]
-            # Glue gently: if our last char isn't whitespace and extra doesn't start with punctuation, insert space.
             glue = "" if (content.endswith((" ", "\n")) or extra.startswith((" ", ",", ".", "!", "?", "*", '"', ")"))) else " "
             content = content + glue + extra
         except HTTPException:
@@ -241,13 +229,11 @@ async def chat(req: ChatRequest):
 
 @api_router.post("/chat/regenerate")
 async def chat_regenerate(req: ChatRequest):
-    """Regenerate with graduated variation strength based on attempt count."""
     attempt = max(1, req.attempt or 1)
     directive = pick_directives(attempt)
 
     avoid_block = ""
     if req.avoid_phrases:
-        # Trim to first 25 chars of each prior version so the model sees the openings to avoid.
         snippets = [p.strip().replace("\n", " ")[:60] for p in req.avoid_phrases[-4:] if p and p.strip()]
         if snippets:
             avoid_block = "\n\nPrior versions you've already produced (DO NOT reuse their openings, gestures, sentence rhythms, or emotional direction):\n" + "\n".join(f'  · "{s}…"' for s in snippets)
@@ -263,10 +249,7 @@ async def chat_regenerate(req: ChatRequest):
     else:
         msgs.insert(0, {"role": "system", "content": instruction})
 
-    # CAMBIO 2: Escalado de sampling más conservador para evitar incoherencias en regen alto.
-    # Antes: temp llegaba a 1.7, penalties a 2.0 — causaba texto en idiomas extraños.
-    # Ahora: techo de 1.25 / 1.2 / 1.2 — sigue siendo variado pero coherente.
-    temp_boost = 0.15 + (attempt - 1) * 0.10   # 0.15, 0.25, 0.35, 0.45...
+    temp_boost = 0.15 + (attempt - 1) * 0.10
     pres_boost = 0.05 + (attempt - 1) * 0.08
     freq_boost = 0.03 + (attempt - 1) * 0.07
 
@@ -287,7 +270,6 @@ async def chat_regenerate(req: ChatRequest):
     except (KeyError, IndexError):
         raise HTTPException(status_code=502, detail="Malformed DeepSeek response")
 
-    # Auto-continue on cut-off, same as /chat.
     if finish_reason == "length" or looks_cut_off(content):
         cont_payload = dict(payload)
         cont_payload["messages"] = (
@@ -310,15 +292,18 @@ async def chat_regenerate(req: ChatRequest):
 
 @api_router.post("/chat/continue")
 async def chat_continue(req: ContinueRequest):
-    """Advance the scene without a new user message. Different from regenerate:
-    instead of replacing the last AI reply, append a NEW beat that moves the story forward."""
+    """Advance the scene without a new user message."""
     msgs = [m.model_dump() for m in req.messages]
+
+    # FIX: nudge más estricto — prohíbe explícitamente inventar contexto
+    # o hablar por el usuario, y fuerza continuación directa desde el último beat.
     nudge = (
-        "[CONTINUE THE SCENE]\n"
-        "Advance the moment forward by ONE small beat. Do NOT wait for the user. Do NOT ask the user what they want to do. "
-        "Something tiny happens or shifts: a glance, a movement, a new line, an external interruption, a passing thought, "
-        "a shift in atmosphere, a small action. Keep it natural and short — under 80 words. Stay fully in character. "
-        "Don't summarize. Don't recap. Move."
+        "[CONTINUE THE SCENE — ONE BEAT FORWARD]\n"
+        "Continue DIRECTLY from where the last message ended. Do NOT rewind, do NOT re-introduce context, "
+        "do NOT summarize what just happened. Pick up mid-scene as if no time has passed.\n"
+        "NEVER speak, think, or act as the user. NEVER invent dialogue or actions for the user.\n"
+        "One small thing happens: a glance, a breath, a movement, a sound, a shift in the air. "
+        "Under 80 words. Stay fully in character. No preamble. Just continue."
     )
     if msgs and msgs[0]["role"] == "system":
         msgs[0]["content"] = msgs[0]["content"] + "\n\n" + nudge
@@ -329,7 +314,7 @@ async def chat_continue(req: ContinueRequest):
         "model": DEEPSEEK_MODEL,
         "messages": msgs,
         "temperature": min(1.5, (req.temperature or 0.85) + 0.1),
-        "max_tokens": min(req.max_tokens or 400, 320),
+        "max_tokens": min(req.max_tokens or 400, 420),
         "presence_penalty": min(2.0, (req.presence_penalty or 0.7) + 0.15),
         "frequency_penalty": min(2.0, (req.frequency_penalty or 0.45) + 0.1),
         "top_p": req.top_p,
@@ -338,10 +323,27 @@ async def chat_continue(req: ContinueRequest):
     data = await deepseek_call(payload)
     try:
         content = data["choices"][0]["message"]["content"]
+        finish_reason = data["choices"][0].get("finish_reason", "")
     except (KeyError, IndexError):
         raise HTTPException(status_code=502, detail="Malformed DeepSeek response")
 
-    # Guard against empty content from DeepSeek (rare upstream hiccup): retry once with higher temp.
+    if finish_reason == "length" or looks_cut_off(content):
+        cont_payload = dict(payload)
+        cont_payload["messages"] = (
+            msgs
+            + [{"role": "assistant", "content": content}]
+            + [{"role": "user", "content": "[Continue mid-sentence. Do not repeat. Finish the thought naturally and stop.]"}]
+        )
+        cont_payload["max_tokens"] = 180
+        cont_payload["temperature"] = max(0.4, payload["temperature"] - 0.2)
+        try:
+            cdata = await deepseek_call(cont_payload)
+            extra = cdata["choices"][0]["message"]["content"]
+            glue = "" if (content.endswith((" ", "\n")) or extra.startswith((" ", ",", ".", "!", "?", "*", '"', ")"))) else " "
+            content = content + glue + extra
+        except HTTPException:
+            pass
+
     if not content or not content.strip():
         retry_payload = dict(payload)
         retry_payload["temperature"] = min(1.5, payload["temperature"] + 0.2)
@@ -352,12 +354,12 @@ async def chat_continue(req: ContinueRequest):
             pass
         if not content or not content.strip():
             raise HTTPException(status_code=502, detail="Empty continuation from model")
+
     return {"content": content}
 
 
 @api_router.post("/chat/summarize")
 async def summarize(req: SummarizeRequest):
-    """Rolling summary that weights RECENT events more heavily."""
     history_text = "\n".join(f"{m.role.upper()}: {m.content}" for m in req.messages)
     sys = (
         "You are the story-keeper for an ongoing roleplay. Update the running summary.\n"
@@ -393,13 +395,8 @@ async def summarize(req: SummarizeRequest):
 
 @api_router.post("/chat/extract-memories")
 async def extract_memories(req: MemoryRequest):
-    """Extract only the most essential durable facts. Very selective to avoid memory bloat."""
     history_text = "\n".join(f"{m.role.upper()}: {m.content}" for m in req.messages)
     existing = "\n".join(f"- {m}" for m in (req.existing_memories or []))
-
-    # CAMBIO 3: Prompt mucho más selectivo — por defecto no guarda nada,
-    # solo guarda si el hecho es realmente irreversible e importante.
-    # Antes pedía "CAPTURE every NEW or CHANGED" con 8 categorías → generaba memorias en casi cada turno.
     sys = (
         "You extract ONLY the most essential, durable facts from a roleplay exchange.\n"
         "Return a JSON array of short strings (each max 12 words). Be VERY selective — aim for 0-3 items max.\n"
@@ -425,7 +422,7 @@ async def extract_memories(req: MemoryRequest):
             {"role": "user", "content": user},
         ],
         "temperature": 0.35,
-        "max_tokens": 160,   # era 320
+        "max_tokens": 160,
         "stream": False,
     }
     data = await deepseek_call(payload)
@@ -453,8 +450,6 @@ async def extract_memories(req: MemoryRequest):
 
 @api_router.post("/chat/emotion")
 async def update_emotion(req: EmotionRequest):
-    """Update a small emotional state vector based on the latest exchange.
-    Values: trust, affection, tension, fear, hostility — each 0-100."""
     history_text = "\n".join(f"{m.role.upper()}: {m.content}" for m in req.messages)
     current = req.current_state or {"trust": 50, "affection": 50, "tension": 30, "fear": 20, "hostility": 20}
     sys = (
@@ -495,7 +490,6 @@ async def update_emotion(req: EmotionRequest):
         state = json.loads(content)
         if not isinstance(state, dict):
             state = current
-        # Clamp + fill missing keys.
         out = {}
         for k in ("trust", "affection", "tension", "fear", "hostility"):
             v = state.get(k, current.get(k, 50))
@@ -511,11 +505,6 @@ async def update_emotion(req: EmotionRequest):
 
 @api_router.post("/chat/stream")
 async def chat_stream(req: ChatRequest):
-    """Streaming chat completion. Forwards DeepSeek SSE chunks to the client as
-    server-sent events with {"delta": "..."} payloads, ending with "[DONE]".
-
-    The frontend uses a fetch ReadableStream reader (see lib/api.js -> chatStream).
-    After streaming, the frontend can detect cut-off and request continuation."""
     if not DEEPSEEK_API_KEY:
         raise HTTPException(status_code=500, detail="DEEPSEEK_API_KEY not configured")
 
@@ -528,7 +517,6 @@ async def chat_stream(req: ChatRequest):
         "frequency_penalty": req.frequency_penalty,
         "top_p": req.top_p,
         "stream": True,
-        # Disable thinking for snappy streaming (no reasoning preamble).
         "thinking": {"type": "disabled"},
     }
     if req.stop:
@@ -583,7 +571,7 @@ async def chat_stream(req: ChatRequest):
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",  # disable proxy buffering (nginx, etc.)
+            "X-Accel-Buffering": "no",
             "Connection": "keep-alive",
         },
     )
@@ -592,13 +580,12 @@ async def chat_stream(req: ChatRequest):
 app.include_router(api_router)
 
 # ---------------------------------------------------------------------------
-# CORS — qué orígenes pueden hablar con este backend.
+# CORS
 # ---------------------------------------------------------------------------
 _raw_origins = os.environ.get("CORS_ORIGINS", "*")
 _origins_list = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 _allow_all = "*" in _origins_list
 
-# Siempre incluimos localhost para desarrollo, no importa lo que diga el .env.
 _dev_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
