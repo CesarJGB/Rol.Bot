@@ -84,8 +84,6 @@ async def deepseek_call(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not DEEPSEEK_API_KEY:
         raise HTTPException(status_code=500, detail="DEEPSEEK_API_KEY not configured")
 
-    payload.setdefault("thinking", {"type": "disabled"})
-
     url = f"{DEEPSEEK_BASE_URL}/chat/completions"
 
     headers = {
