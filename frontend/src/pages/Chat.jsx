@@ -7,7 +7,7 @@ import { MessageBubble } from "../components/MessageBubble";
 import { SceneSheet } from "../components/SceneSheet";
 import { MemorySheet } from "../components/MemorySheet";
 import { ChatsSheet } from "../components/ChatsSheet";
-import { buildSystemPrompt, buildMessages, stylingToParams } from "../lib/prompt";
+import { buildSystemPrompt, buildStablePrompt, buildDynamicPrompt, buildMessages, stylingToParams } from "../lib/prompt";
 import { chatComplete, chatStream, chatRegenerate, chatContinue, extractMemories, summarizeChat, updateEmotion } from "../lib/api";
 import { looksCutOff } from "../lib/textUtil";
 import { DEFAULT_EMOTION } from "../lib/constants";
@@ -73,19 +73,31 @@ export default function Chat() {
 
   const currentParams = useMemo(() => stylingToParams(settings), [settings]);
 
-  const buildPayload = useCallback((history) => {
-    const systemPrompt = buildSystemPrompt({
-      character,
-      scene: session?.scene,
-      profile,
+    const buildPayload = useCallback((history) => {
+    // 1. Preparamos los argumentos
+    const args = {
+      character, 
+      scene: session?.scene, 
+      profile, 
       settings,
-      summary: session?.summary,
+      summary: session?.summary, 
       memories: normalizeMemories(session?.memories),
-      emotion: session?.emotion || DEFAULT_EMOTION,
-      history,
-    });
+      emotion: session?.emotion || DEFAULT_EMOTION, 
+      history
+    };
+
+    // 2. Generamos ambos bloques por separado
+    const stablePrompt = buildStablePrompt(args);
+    const dynamicPrompt = buildDynamicPrompt(args);
+
+    // 3. Se los pasamos a nuestro nuevo blindaje de mensajes
     return {
-      messages: buildMessages({ systemPrompt, history, shortHistory: settings.shortHistory }),
+      messages: buildMessages({ 
+        stablePrompt, 
+        dynamicPrompt, 
+        history, 
+        shortHistory: settings.shortHistory 
+      }),
       ...currentParams,
     };
   }, [character, session?.scene, session?.summary, session?.memories, session?.emotion, profile, settings, currentParams]);
