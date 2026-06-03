@@ -9,6 +9,7 @@ import {
   buildSession,
 } from "../lib/storage";
 import { DEFAULT_EMOTION } from "../lib/constants";
+import { toast } from "sonner";
 
 const AppContext = createContext(null);
 
@@ -32,16 +33,33 @@ export const blankCharacter = (overrides = {}) => ({
 
 const emptyChatBundle = () => ({ sessions: {}, activeSessionId: null });
 
+// Wrapper que captura el error de storage lleno y avisa al usuario
+// en lugar de dejar la app en pantalla negra.
+const trySave = (saveFn, args) => {
+  try {
+    saveFn(args);
+  } catch (e) {
+    if (e.isStorageFull) {
+      toast.error(
+        "⚠️ Almacenamiento lleno. Exporta tu progreso desde ajustes y elimina conversaciones antiguas para liberar espacio.",
+        { duration: 8000 }
+      );
+    } else {
+      throw e;
+    }
+  }
+};
+
 export const AppProvider = ({ children }) => {
   const [characters, setCharacters] = useState(() => ensureSeed() || []);
   const [chats, setChats] = useState(() => loadChats(ensureSeed() || []));
   const [profile, setProfile] = useState(() => loadProfile());
   const [settings, setSettings] = useState(() => loadSettings());
 
-  useEffect(() => { saveCharacters(characters); }, [characters]);
-  useEffect(() => { saveChats(chats); }, [chats]);
-  useEffect(() => { saveProfile(profile); }, [profile]);
-  useEffect(() => { saveSettings(settings); }, [settings]);
+  useEffect(() => { trySave(saveCharacters, characters); }, [characters]);
+  useEffect(() => { trySave(saveChats, chats); }, [chats]);
+  useEffect(() => { trySave(saveProfile, profile); }, [profile]);
+  useEffect(() => { trySave(saveSettings, settings); }, [settings]);
 
   // ---- characters ----
   const upsertCharacter = useCallback((c) => {
@@ -76,12 +94,10 @@ export const AppProvider = ({ children }) => {
     return bundle.sessions[bundle.activeSessionId] || null;
   }, [chats]);
 
-  // Ensure character has at least one session and an active one.
   const ensureSession = useCallback((characterId) => {
     setChats(prev => {
       const bundle = prev[characterId] || emptyChatBundle();
       if (bundle.activeSessionId && bundle.sessions[bundle.activeSessionId]) return prev;
-      // No active session — create one (or pick the most recently updated).
       const sessionIds = Object.keys(bundle.sessions);
       if (sessionIds.length > 0) {
         const newest = sessionIds.sort((a, b) => (bundle.sessions[b].updatedAt || 0) - (bundle.sessions[a].updatedAt || 0))[0];
@@ -144,7 +160,6 @@ export const AppProvider = ({ children }) => {
       if (sessionId === activeSessionId) {
         activeSessionId = remainingIds[0] || null;
       }
-      // If no sessions left, create a fresh one.
       if (!activeSessionId) {
         const character = characters.find(c => c.id === characterId);
         const fresh = buildSession({ name: "Conversación principal" }, character);
@@ -157,7 +172,6 @@ export const AppProvider = ({ children }) => {
     });
   }, [characters]);
 
-  // Update the active session. updater(session) -> newSession
   const updateActiveSession = useCallback((characterId, updater) => {
     setChats(prev => {
       const bundle = prev[characterId];
@@ -174,7 +188,6 @@ export const AppProvider = ({ children }) => {
     });
   }, []);
 
-  // Reset active session to a blank one (preserving the session id and name).
   const resetActiveSession = useCallback((characterId) => {
     const character = characters.find(c => c.id === characterId);
     setChats(prev => {
