@@ -74,7 +74,6 @@ export default function Chat() {
   const currentParams = useMemo(() => stylingToParams(settings), [settings]);
 
   const buildPayload = useCallback((history) => {
-    // 1. Preparamos los argumentos
     const args = {
       character, 
       scene: session?.scene, 
@@ -86,11 +85,9 @@ export default function Chat() {
       history
     };
 
-    // 2. Generamos ambos bloques por separado
     const stablePrompt = buildStablePrompt(args);
     const dynamicPrompt = buildDynamicPrompt(args);
 
-    // 3. Se los pasamos a nuestro nuevo blindaje de mensajes
     return {
       messages: buildMessages({ 
         stablePrompt, 
@@ -214,7 +211,6 @@ export default function Chat() {
           });
         }
 
-        // Limpiamos los espacios en blanco finales antes de verificar el corte de frase
         const trimmedContent = finalContent ? finalContent.trim() : "";
 
         if (trimmedContent && looksCutOff(trimmedContent)) {
@@ -248,7 +244,7 @@ export default function Chat() {
           } catch { /* keep original */ }
         }
       } else {
-        // CORRECCIÓN: Colocar el fallback síncrono estrictamente dentro de un bloque else
+        // Fallback síncrono limpio (solo corre si useStreaming es false)
         finalContent = await chatComplete(payload);
         updateActiveSession(characterId, (s) => {
           const msgs = [...s.messages];
@@ -546,7 +542,8 @@ export default function Chat() {
             </div>
           )}
 
-          {!busy && !streamingMsgId && messages.length >= 1 && messages[messages.length - 1]?.role === "assistant" && (
+          {/* CORRECCIÓN: El botón Continuar ahora comprueba únicamente el largo del historial */}
+          {!busy && !streamingMsgId && messages.length >= 1 && (
             <div className="flex justify-center pt-1">
               <button
                 data-testid="continue-chat-button"
@@ -620,4 +617,3 @@ export default function Chat() {
     </div>
   );
 }
-
