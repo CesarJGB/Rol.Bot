@@ -20,7 +20,7 @@ export const DEFAULT_SETTINGS = {
   creativity: 60,
   romanticism: 40,
   emotionalIntensity: 55,
-  maxTokens: 420,
+  maxTokens: 800,
   shortHistory: 8,
   summarizeEvery: 8,
   extractMemoryEvery: 4,
