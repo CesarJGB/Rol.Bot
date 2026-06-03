@@ -72,37 +72,31 @@ const tokenize = (text) => {
   return new Set(cleaned.split(/\s+/).filter(t => t && t.length > 2 && !STOPWORDS.has(t)));
 };
 
-export const selectMemories = (memories, history, maxCount = 4) => {
-  if (!memories || memories.length === 0) return [];
-  const normalized = memories.map(m => (typeof m === "string" ? { text: m, pinned: false } : m));
-  const pinned = normalized.filter(m => m.pinned);
-
-  let intentText = "";
-  if (history && history.length) {
-    const tail = history.slice(-4);
-    intentText = tail.map(m => m.content).join(" ");
-  }
-  const intent = tokenize(intentText);
-
-  const others = normalized.filter(m => !m.pinned);
-  const scored = others.map(m => ({ m, s: scoreMemory(m.text, intent) }));
-  scored.sort((a, b) => b.s - a.s);
-  const slots = Math.max(0, maxCount - pinned.length);
-  const topByScore = scored.filter(x => x.s > 0).slice(0, slots).map(x => x.m);
-  const picked = new Set(topByScore.map(m => m.text));
-  const recent = [...others].reverse().filter(m => !picked.has(m.text));
-  while (topByScore.length < slots && recent.length) {
-    topByScore.push(recent.shift());
-  }
-  return [...pinned, ...topByScore].slice(0, maxCount);
-};
-
 // 1. EL BLOQUE ESTÁTICO (Nunca cambia, el caché lo guarda gratis)
 export const buildStablePrompt = ({ character, profile }) => {
   const blocks = [];
 
-  blocks.push(`Eres ${character.name}, un personaje ficticio en un roleplay en curso con el usuario. NO eres un asistente de IA. NO rompes el personaje bajo ninguna circunstancia. Nunca te refieres a ti como modelo de lenguaje, IA o chatbot.`);
-  blocks.push(`### Comportamiento esencial\n- Quédate completamente en personaje como ${character.name}.\n- Nunca hables, actúes ni decidas por el usuario. Nunca narres los pensamientos del usuario.\n- Nunca rompas la cuarta pared.\n- Haz avanzar la escena gradualmente. Deja espacio para que el usuario participe.\n- Tienes defectos, contradicciones, estados de ánimo. Muéstralos.\n- Varía la longitud de las respuestas con naturalidad:\n  · ~30% respuestas cortas (una línea, un gesto, una pregunta)\n  · ~50% respuestas medias (un beat de acción + unas líneas de diálogo)\n  · ~20% respuestas largas y narrativas (atmósfera, interioridad)\n- Evita los muros de texto. Evita repetir frases, gestos o ritmos entre turnos.\n- Usa *cursivas* para acción/descripción y texto normal para el diálogo hablado.\n- A veces responde sólo con un gesto, un silencio, un respiro contenido, una línea interrumpida. La gente real hace eso.\n- Evita el positivismo constante, evita el tono de asistente, evita sobreexplicar.\n- Si la escena incluye otros personajes (familiares, amigos, extraños), puedes darles una línea breve o describir su acción, pero SIEMPRE desde tu perspectiva como ${character.name}. Nunca cambies de narrador ni adoptes otro personaje como voz principal sostenida.`);
+  blocks.push(
+`Eres ${character.name}, un personaje ficticio en un roleplay en curso con el usuario. NO eres un asistente de IA. NO rompes el personaje bajo ninguna circunstancia. Nunca te refieres a ti como modelo de lenguaje, IA o chatbot.`
+  );
+
+  blocks.push(
+`### Comportamiento esencial
+- Quédate completamente en personaje como ${character.name}.
+- NUNCA hables, actúes, pienses ni decidas por el usuario. NUNCA narres las acciones o pensamientos del usuario.
+- Nunca rompas la cuarta pared.
+- Haz avanzar la escena gradualmente. Deja espacio para que el usuario participe.
+- Tienes defectos, contradicciones, estados de ánimo. Muéstralos.
+- Varía la longitud de las respuestas con naturalidad:
+  · ~30% respuestas cortas (una línea, un gesto, una pregunta)
+  · ~50% respuestas medias (un beat de acción + unas líneas de diálogo)
+  · ~20% respuestas largas y narrativas (atmósfera, interioridad)
+- Evita los muros de texto. Evita repetir frases, gestos o ritmos entre turnos.
+- Usa *cursivas* para acción/descripción y texto normal para el diálogo hablado.
+- A veces responde sólo con un gesto, un silencio, un respiro contenido, una línea interrumpida. La gente real hace eso.
+- Evita el positivismo constante, evita el tono de asistente, evita sobreexplicar.
+- PERSONAJES SECUNDARIOS: Si hay otros personajes en la escena (familiares, amigos, extraños), encárnalos con naturalidad cuando el contexto lo requiera. Si el usuario se dirige directamente a otro personaje ("oye mamá", "¿Luna, qué piensas?", etc.), responde PRIMERO como ese personaje en primera persona durante esa interacción, luego retoma tu voz como ${character.name} si es necesario. No esperes instrucciones explícitas — da voz a los secundarios de forma fluida como lo haría un narrador de roleplay. La única regla irrompible: nunca hables ni actúes como el usuario.`
+  );
 
   const id = formatBlock("Identidad", character.personality);
   if (id) blocks.push(id);
@@ -124,7 +118,14 @@ export const buildStablePrompt = ({ character, profile }) => {
     blocks.push(`### Sobre el usuario (con quien hablas)\n${p.join("\n")}\nReacciona y adáptate a quién es. Notálo.`);
   }
 
-  blocks.push(`### Formato de salida\n- Usa *asteriscos* para acciones, descripciones y detalles sensoriales interiores.\n- Texto normal para el diálogo hablado.\n- No antepongas "${character.name}:" ni etiquetas de nombre a tus líneas.\n- Nunca escribas las líneas o acciones del usuario.\n- Cierra siempre tu respuesta con puntuación final (.!?…) o cerrando una acción con *. Nunca cortes una frase a la mitad.`);
+  blocks.push(
+`### Formato de salida
+- Usa *asteriscos* para acciones, descripciones y detalles sensoriales interiores.
+- Texto normal para el diálogo hablado.
+- No antepongas "${character.name}:" ni etiquetas de nombre a tus líneas.
+- Nunca escribas las líneas o acciones del usuario.
+- Cierra siempre tu respuesta con puntuación final (.!?…) o cerrando una acción con *. Nunca cortes una frase a la mitad.`
+  );
 
   return blocks.join("\n\n");
 };
@@ -171,7 +172,7 @@ export const buildDynamicPrompt = ({ scene, settings, summary, memories, emotion
   return blocks.join("\n\n");
 };
 
-// 3. WRAPPER POR COMPATIBILIDAD (Para que la intro original no se rompa)
+// 3. WRAPPER POR COMPATIBILIDAD (Para que la intro original y otros scripts no se rompan)
 export const buildSystemPrompt = (args) => {
   return buildStablePrompt(args) + "\n\n" + buildDynamicPrompt(args);
 };
@@ -182,7 +183,12 @@ const estimateTokens = (text) => Math.ceil((text || "").length / 4);
 export const buildMessages = ({ stablePrompt, dynamicPrompt, history, shortHistory = 8 }) => {
   const TOKEN_BUDGET = 14000;
   const RESPONSE_RESERVE = 500;
-  const available = TOKEN_BUDGET - RESPONSE_RESERVE - estimateTokens(stablePrompt) - estimateTokens(dynamicPrompt);
+  
+  // OJO: Si dynamicPrompt no se pasa (p. ej. en componentes viejos), usamos buildSystemPrompt
+  const finalStable = stablePrompt || buildSystemPrompt({history});
+  const finalDynamic = dynamicPrompt || "";
+
+  const available = TOKEN_BUDGET - RESPONSE_RESERVE - estimateTokens(finalStable) - estimateTokens(finalDynamic);
 
   let sliced = history.slice(-shortHistory);
   while (sliced.length > 2) {
@@ -192,19 +198,19 @@ export const buildMessages = ({ stablePrompt, dynamicPrompt, history, shortHisto
   }
 
   // A) Ponemos el prompt estático al principio (Esto asegura el Cache Hit)
-  const msgs = [{ role: "system", content: stablePrompt }];
+  const msgs = [{ role: "system", content: finalStable }];
 
   const priorHistory = sliced.slice(0, -1);
   const lastMessage = sliced[sliced.length - 1];
 
-  // B) Agregamos el historial recortado
+  // B) Agregamos el historial recortado (menos el último mensaje)
   priorHistory.forEach(m => {
     msgs.push({ role: m.role === "assistant" ? "assistant" : "user", content: m.content });
   });
 
   // C) Inyectamos el bloque dinámico como un mensaje de sistema oculto AL FINAL
-  if (dynamicPrompt && dynamicPrompt.trim()) {
-    msgs.push({ role: "system", content: `[Contexto dinámico actualizado para este turno]\n${dynamicPrompt}` });
+  if (finalDynamic && finalDynamic.trim()) {
+    msgs.push({ role: "system", content: `[Contexto dinámico actualizado para este turno]\n${finalDynamic}` });
   }
 
   // D) Y finalmente, el último mensaje del usuario
@@ -217,3 +223,4 @@ export const buildMessages = ({ stablePrompt, dynamicPrompt, history, shortHisto
 
 export const __test = { tokenize, scoreMemory, estimateTokens };
 export { EMOTION_LABELS_ES };
+
