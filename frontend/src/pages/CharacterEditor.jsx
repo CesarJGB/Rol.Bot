@@ -18,6 +18,39 @@ const Field = ({ label, hint, children, testId }) => (
 const inputClass =
   "w-full bg-[#0a0a0a] border border-white/[0.08] rounded-lg px-3.5 py-2.5 text-sm text-[#EDEDED] placeholder:text-[#71717A] focus:outline-none focus:border-[#C6A45C]/60 transition-all";
 
+// Comprime una imagen a máximo MAX_SIZExMAX_SIZE px en JPEG calidad QUALITY.
+// Reduce un avatar típico de ~300-800KB a ~15-40KB.
+const MAX_SIZE = 256;   // px — suficiente para un avatar de chat
+const QUALITY = 0.82;   // 0-1 — balance calidad/peso
+
+const compressImage = (file) =>
+  new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      // Calcular dimensiones manteniendo proporción.
+      let { width, height } = img;
+      if (width > MAX_SIZE || height > MAX_SIZE) {
+        if (width > height) {
+          height = Math.round((height / width) * MAX_SIZE);
+          width = MAX_SIZE;
+        } else {
+          width = Math.round((width / height) * MAX_SIZE);
+          height = MAX_SIZE;
+        }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL("image/jpeg", QUALITY));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+
 export default function CharacterEditor() {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -37,12 +70,20 @@ export default function CharacterEditor() {
   const set = (k) => (e) => setForm(s => ({ ...s, [k]: typeof e === "string" ? e : e.target.value }));
   const setScene = (k) => (e) => setForm(s => ({ ...s, sceneDefault: { ...s.sceneDefault, [k]: e.target.value } }));
 
-  const handleAvatarUpload = (e) => {
+  // FIX: comprime la imagen antes de guardarla en el estado.
+  const handleAvatarUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setForm(s => ({ ...s, avatar: reader.result }));
-    reader.readAsDataURL(file);
+    try {
+      const compressed = await compressImage(file);
+      setForm(s => ({ ...s, avatar: compressed }));
+    } catch {
+      // Fallback: si falla la compresión, guardar sin comprimir.
+      const reader = new FileReader();
+      reader.onload = () => setForm(s => ({ ...s, avatar: reader.result }));
+      reader.readAsDataURL(file);
+      toast.warning("No se pudo comprimir la imagen, se guardó sin comprimir.");
+    }
   };
 
   const handleSave = () => {
