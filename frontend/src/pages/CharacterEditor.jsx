@@ -8,8 +8,6 @@ import { toast } from "sonner";
 import { autoFillCharacter } from "../lib/api";
 import { Trash2, Save, Image as ImageIcon, Download, Wand2 } from "lucide-react";
 
-
-
 const Field = ({ label, hint, children, testId }) => (
   <div className="mb-5" data-testid={testId ? `field-${testId}` : undefined}>
     <div className="label-eyebrow mb-2">{label}</div>
@@ -54,10 +52,30 @@ const compressImage = (file) =>
     img.src = url;
   });
 
+export default function CharacterEditor() {
+  const navigate = useNavigate();
+  const { id } = useParams();
+  const { characters, upsertCharacter, deleteCharacter, getBundle } = useApp();
+
+  const initial = useMemo(() => {
+    if (id && id !== "new") {
+      const existing = characters.find(c => c.id === id);
+      if (existing) return existing;
+    }
+    return blankCharacter({ avatar: DEFAULT_AVATARS[Math.floor(Math.random() * DEFAULT_AVATARS.length)] });
+  }, [id, characters]);
+
+  // --- HOOKS DE ESTADO (Mover aquí adentro) ---
+  const [form, setForm] = useState(initial);
   const [autofilling, setAutofilling] = useState(false);
 
+  useEffect(() => { setForm(initial); }, [initial]);
+
+  const set = (k) => (e) => setForm(s => ({ ...s, [k]: typeof e === "string" ? e : e.target.value }));
+  const setScene = (k) => (e) => setForm(s => ({ ...s, sceneDefault: { ...s.sceneDefault, [k]: e.target.value } }));
+
+  // --- FUNCIÓN MANEJADORA DE AUTO-RELLENO (Mover aquí adentro) ---
   const handleAutoFill = async () => {
-    // Usamos el campo "Personalidad" como la caja donde el usuario pega su JSON crudo
     const baseDesc = form.personality || form.lore || "";
     if (baseDesc.trim().length < 20) {
       toast.error("Pega tu JSON o texto base en el campo 'Personalidad' primero.");
@@ -72,7 +90,6 @@ const compressImage = (file) =>
         initial_message: form.initialMessage || ""
       });
       
-      // Actualizamos todo el formulario de golpe con lo que devolvió la IA
       setForm(s => ({
         ...s,
         tagline: data.tagline || s.tagline,
@@ -91,26 +108,6 @@ const compressImage = (file) =>
     }
   };
 
-export default function CharacterEditor() {
-  const navigate = useNavigate();
-  const { id } = useParams();
-  const { characters, upsertCharacter, deleteCharacter, getBundle } = useApp();
-
-  const initial = useMemo(() => {
-    if (id && id !== "new") {
-      const existing = characters.find(c => c.id === id);
-      if (existing) return existing;
-    }
-    return blankCharacter({ avatar: DEFAULT_AVATARS[Math.floor(Math.random() * DEFAULT_AVATARS.length)] });
-  }, [id, characters]);
-
-  const [form, setForm] = useState(initial);
-  useEffect(() => { setForm(initial); }, [initial]);
-
-  const set = (k) => (e) => setForm(s => ({ ...s, [k]: typeof e === "string" ? e : e.target.value }));
-  const setScene = (k) => (e) => setForm(s => ({ ...s, sceneDefault: { ...s.sceneDefault, [k]: e.target.value } }));
-
-  // FIX: comprime la imagen antes de guardarla en el estado.
   const handleAvatarUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -118,7 +115,6 @@ export default function CharacterEditor() {
       const compressed = await compressImage(file);
       setForm(s => ({ ...s, avatar: compressed }));
     } catch {
-      // Fallback: si falla la compresión, guardar sin comprimir.
       const reader = new FileReader();
       reader.onload = () => setForm(s => ({ ...s, avatar: reader.result }));
       reader.readAsDataURL(file);
@@ -158,7 +154,7 @@ export default function CharacterEditor() {
   const isNew = !characters.find(c => c.id === form.id);
 
   return (
-        <div className="min-h-screen app-bg pb-24">
+    <div className="min-h-screen app-bg pb-24">
       <TopBar
         title={isNew ? "Nuevo personaje" : form.name || "Editar"}
         subtitle={isNew ? "Creación" : "Editando"}
@@ -184,7 +180,6 @@ export default function CharacterEditor() {
           </div>
         }
       />
-
 
       <div className="max-w-2xl mx-auto px-4 py-6 relative z-10">
         <div className="flex items-center gap-5 mb-8">
