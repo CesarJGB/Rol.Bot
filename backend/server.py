@@ -41,7 +41,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     temperature: Optional[float] = 0.85
-    max_tokens: Optional[int] = 800  # <- Aumentado a 800
+    max_tokens: Optional[int] = 800
     presence_penalty: Optional[float] = 0.7
     frequency_penalty: Optional[float] = 0.45
     top_p: Optional[float] = 0.95
@@ -54,7 +54,7 @@ class ChatRequest(BaseModel):
 class ContinueRequest(BaseModel):
     messages: List[ChatMessage]
     temperature: Optional[float] = 0.85
-    max_tokens: Optional[int] = 800  # <- Aumentado a 800
+    max_tokens: Optional[int] = 800
     presence_penalty: Optional[float] = 0.7
     frequency_penalty: Optional[float] = 0.45
     top_p: Optional[float] = 0.95
@@ -97,30 +97,28 @@ async def deepseek_call(payload: Dict[str, Any]) -> Dict[str, Any]:
         except httpx.RequestError as e:
             raise HTTPException(status_code=502, detail=f"DeepSeek network error: {e}")
 
+    # LOGS ACTIVADOS DE NUEVO PARA DEPURACIÓN
+    print("\n--- [DEBUG DEEPSEEK CALL] ---")
+    print("STATUS:", resp.status_code)
+    print("RAW RESPONSE:", resp.text)
+    print("-------------------------------\n")
+
     if resp.status_code >= 400:
         try:
             err = resp.json()
         except Exception:
             err = {"raw": resp.text}
-
         print("DEEPSEEK ERROR:", err)
-
-        raise HTTPException(
-            status_code=resp.status_code,
-            detail={"deepseek": err}
-        )
+        raise HTTPException(status_code=resp.status_code, detail={"deepseek": err})
 
     try:
         data = resp.json()
     except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Invalid JSON response: {resp.text}"
-        )
+        raise HTTPException(status_code=500, detail=f"Invalid JSON response: {resp.text}")
 
     return data
 
-# ------------- Regen directives (graduated intensity) -------------
+# ------------- Regen directives -------------
 
 DIRECTIVES_MILD = [
     "Change your opening sentence completely. Don't start the way you did before.",
@@ -207,7 +205,7 @@ async def chat(req: ChatRequest):
             + [{"role": "assistant", "content": content}]
             + [{"role": "user", "content": "[Continue exactly where you left off mid-sentence. Do not repeat. Finish the thought naturally and stop within a beat or two. Plain continuation only — no preamble.]"}]
         )
-        cont_payload["max_tokens"] = min(600, req.max_tokens or 800) # <- Ajuste de tokens
+        cont_payload["max_tokens"] = min(600, req.max_tokens or 800)
         cont_payload["temperature"] = max(0.4, (req.temperature or 0.85) - 0.2)
         try:
             cdata = await deepseek_call(cont_payload)
@@ -242,17 +240,13 @@ async def chat_regenerate(req: ChatRequest):
     else:
         msgs.insert(0, {"role": "system", "content": instruction})
 
-    temp_boost = 0.15 + (attempt - 1) * 0.10
-    pres_boost = 0.05 + (attempt - 1) * 0.08
-    freq_boost = 0.03 + (attempt - 1) * 0.07
-
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": msgs,
-        "temperature": min(1.25, (req.temperature or 0.85) + temp_boost),
+        "temperature": min(1.25, (req.temperature or 0.85) + (0.15 + (attempt - 1) * 0.10)),
         "max_tokens": req.max_tokens,
-        "presence_penalty": min(1.2, (req.presence_penalty or 0.7) + pres_boost),
-        "frequency_penalty": min(1.2, (req.frequency_penalty or 0.45) + freq_boost),
+        "presence_penalty": min(1.2, (req.presence_penalty or 0.7) + (0.05 + (attempt - 1) * 0.08)),
+        "frequency_penalty": min(1.2, (req.frequency_penalty or 0.45) + (0.03 + (attempt - 1) * 0.07)),
         "top_p": min(1.0, (req.top_p or 0.95)),
         "stream": False,
     }
@@ -270,7 +264,7 @@ async def chat_regenerate(req: ChatRequest):
             + [{"role": "assistant", "content": content}]
             + [{"role": "user", "content": "[Continue mid-sentence. Do not repeat. Finish the thought naturally and stop.]"}]
         )
-        cont_payload["max_tokens"] = min(600, req.max_tokens or 800) # <- Ajuste de tokens
+        cont_payload["max_tokens"] = min(600, req.max_tokens or 800)
         cont_payload["temperature"] = max(0.4, payload["temperature"] - 0.3)
         try:
             cdata = await deepseek_call(cont_payload)
@@ -286,7 +280,6 @@ async def chat_regenerate(req: ChatRequest):
 @api_router.post("/chat/continue")
 async def chat_continue(req: ContinueRequest):
     msgs = [m.model_dump() for m in req.messages]
-
     nudge = (
         "[CONTINUE THE SCENE — ONE BEAT FORWARD]\n"
         "Continue DIRECTLY from where the last message ended. Do NOT rewind, do NOT re-introduce context, "
@@ -304,7 +297,7 @@ async def chat_continue(req: ContinueRequest):
         "model": DEEPSEEK_MODEL,
         "messages": msgs,
         "temperature": min(1.5, (req.temperature or 0.85) + 0.1),
-        "max_tokens": min(req.max_tokens or 800, 1000), # <- Ajuste de tokens
+        "max_tokens": min(req.max_tokens or 800, 1000),
         "presence_penalty": min(2.0, (req.presence_penalty or 0.7) + 0.15),
         "frequency_penalty": min(2.0, (req.frequency_penalty or 0.45) + 0.1),
         "top_p": req.top_p,
@@ -324,7 +317,7 @@ async def chat_continue(req: ContinueRequest):
             + [{"role": "assistant", "content": content}]
             + [{"role": "user", "content": "[Continue mid-sentence. Do not repeat. Finish the thought naturally and stop.]"}]
         )
-        cont_payload["max_tokens"] = 600 # <- Ajuste de tokens
+        cont_payload["max_tokens"] = 600
         cont_payload["temperature"] = max(0.4, payload["temperature"] - 0.2)
         try:
             cdata = await deepseek_call(cont_payload)
@@ -333,17 +326,6 @@ async def chat_continue(req: ContinueRequest):
             content = content + glue + extra
         except HTTPException:
             pass
-
-    if not content or not content.strip():
-        retry_payload = dict(payload)
-        retry_payload["temperature"] = min(1.5, payload["temperature"] + 0.2)
-        try:
-            data2 = await deepseek_call(retry_payload)
-            content = data2["choices"][0]["message"]["content"]
-        except Exception:
-            pass
-        if not content or not content.strip():
-            raise HTTPException(status_code=502, detail="Empty continuation from model")
 
     return {"content": content}
 
@@ -361,27 +343,18 @@ async def summarize(req: SummarizeRequest):
         "- Capture emotional shifts (e.g. 'her guard dropped slightly', 'tension thickened between them').\n"
         "- NO bullet points. NO meta. NO 'in summary'. Just the narrative."
     )
-    user = (
-        (f"Current running summary:\n{req.previous_summary}\n\n" if req.previous_summary else "")
-        + f"NEW exchange between USER and {req.character_name} (most important — center the new summary on this):\n{history_text}"
-    )
+    user = ((f"Current running summary:\n{req.previous_summary}\n\n" if req.previous_summary else "")
+            + f"NEW exchange between USER and {req.character_name}:\n{history_text}")
     payload = {
         "model": DEEPSEEK_MODEL,
-        "messages": [
-            {"role": "system", "content": sys},
-            {"role": "user", "content": user},
-        ],
+        "messages": [{"role": "system", "content": sys}, {"role": "user", "content": user}],
         "temperature": 0.45,
         "max_tokens": 260,
         "stream": False,
         "thinking": {"type": "disabled"},
     }
     data = await deepseek_call(payload)
-    try:
-        content = data["choices"][0]["message"]["content"].strip()
-    except (KeyError, IndexError):
-        raise HTTPException(status_code=502, detail="Malformed DeepSeek response")
-    return {"summary": content}
+    return {"summary": data["choices"][0]["message"]["content"].strip()}
 
 
 @api_router.post("/chat/extract-memories")
@@ -396,47 +369,24 @@ async def extract_memories(req: MemoryRequest):
         "- Critical secrets revealed for the first time\n"
         "- Named characters introduced with their role/relationship\n"
         "- Major irreversible events (death, confession, betrayal, breakup, first kiss)\n"
-        "IGNORE: emotional shifts, atmosphere, scene descriptions, small talk, "
-        "anything already in existing memories, anything that could change next turn.\n"
-        "When in doubt, leave it out. Return [] freely — not every exchange needs a memory.\n"
-        "Output JSON only. No prose. No code fences. Just an array."
+        "IGNORE small talk and emotional shifts. Output JSON only."
     )
-    user = (
-        f"Character: {req.character_name}\n\n"
-        f"Existing memories (do NOT duplicate; only include genuinely NEW or CHANGED facts):\n{existing or '(none)'}\n\n"
-        f"Recent exchange to mine for new facts:\n{history_text}"
-    )
+    user = f"Character: {req.character_name}\n\nExisting memories:\n{existing or '(none)'}\n\nExchange:\n{history_text}"
     payload = {
         "model": DEEPSEEK_MODEL,
-        "messages": [
-            {"role": "system", "content": sys},
-            {"role": "user", "content": user},
-        ],
+        "messages": [{"role": "system", "content": sys}, {"role": "user", "content": user}],
         "temperature": 0.35,
         "max_tokens": 160,
         "stream": False,
         "thinking": {"type": "disabled"},
     }
     data = await deepseek_call(payload)
-    try:
-        content = data["choices"][0]["message"]["content"].strip()
-    except (KeyError, IndexError):
-        raise HTTPException(status_code=502, detail="Malformed DeepSeek response")
-
-    if content.startswith("```"):
-        content = content.strip("`")
-        if content.lower().startswith("json"):
-            content = content[4:]
-        content = content.strip()
-
+    content = data["choices"][0]["message"]["content"].strip().strip("`").replace("json", "").strip()
     try:
         memories = json.loads(content)
-        if not isinstance(memories, list):
-            memories = []
-        memories = [str(m).strip() for m in memories if str(m).strip()]
+        if not isinstance(memories, list): memories = []
     except json.JSONDecodeError:
         memories = []
-
     return {"memories": memories}
 
 
@@ -447,53 +397,51 @@ async def update_emotion(req: EmotionRequest):
     sys = (
         "You track a fictional character's emotional state toward the user across a roleplay.\n"
         "Given the recent exchange and current state values (0-100 each), return the UPDATED state as JSON.\n"
-        "Keys: trust, affection, tension, fear, hostility — each integer 0-100.\n"
-        "Move values gradually (typically ±3 to ±15). Big moves only on clearly major beats (betrayal, confession, intimacy, violence).\n"
-        "Output JSON only. No prose. No code fences. Just an object."
+        "Keys: trust, affection, tension, fear, hostility — each integer 0-100. Output JSON only."
     )
-    user = (
-        f"Character: {req.character_name}\n\n"
-        f"Current state: {json.dumps(current)}\n\n"
-        f"Recent exchange:\n{history_text}"
-    )
+    user = f"Character: {req.character_name}\n\nCurrent state: {json.dumps(current)}\n\nRecent exchange:\n{history_text}"
     payload = {
         "model": DEEPSEEK_MODEL,
-        "messages": [
-            {"role": "system", "content": sys},
-            {"role": "user", "content": user},
-        ],
+        "messages": [{"role": "system", "content": sys}, {"role": "user", "content": user}],
         "temperature": 0.3,
         "max_tokens": 120,
         "stream": False,
         "thinking": {"type": "disabled"},
     }
     data = await deepseek_call(payload)
-    try:
-        content = data["choices"][0]["message"]["content"].strip()
-    except (KeyError, IndexError):
-        raise HTTPException(status_code=502, detail="Malformed DeepSeek response")
-
-    if content.startswith("```"):
-        content = content.strip("`")
-        if content.lower().startswith("json"):
-            content = content[4:]
-        content = content.strip()
-
+    content = data["choices"][0]["message"]["content"].strip().strip("`").replace("json", "").strip()
     try:
         state = json.loads(content)
-        if not isinstance(state, dict):
-            state = current
-        out = {}
-        for k in ("trust", "affection", "tension", "fear", "hostility"):
-            v = state.get(k, current.get(k, 50))
-            try:
-                v = int(v)
-            except (TypeError, ValueError):
-                v = current.get(k, 50)
-            out[k] = max(0, min(100, v))
+        out = {k: max(0, min(100, int(state.get(k, current.get(k, 50))))) for k in current.keys()}
         return {"state": out}
-    except json.JSONDecodeError:
+    except Exception:
         return {"state": current}
+
+
+class CompressRequest(BaseModel):
+    text: str
+
+@api_router.post("/chat/compress")
+async def compress_character(req: CompressRequest):
+    sys = (
+        "Eres un experto en optimización de prompts para roleplay. Tu tarea es tomar la descripción "
+        "de un personaje (en texto libre o JSON) y comprimirla en un formato YAML estricto y denso (estilo W++).\n"
+        "Reglas:\n1. Elimina palabras vacías, narración y redundancias.\n2. Usa listas en línea con corchetes [a, b, c].\n"
+        "3. Estructura los campos así: Apariencia, Personalidad, Comportamiento, Contexto, Habla, Gustos, Odios.\n"
+        "Devuelve SOLO el código YAML puro, sin code fences (```) ni explicaciones."
+    )
+    payload = {
+        "model": DEEPSEEK_MODEL,
+        "messages": [{"role": "system", "content": sys}, {"role": "user", "content": f"Comprime este perfil:\n\n{req.text}"}],
+        "temperature": 0.2,
+        "max_tokens": 500,
+        "stream": False,
+        "thinking": {"type": "disabled"}
+    }
+    data = await deepseek_call(payload)
+    content = data["choices"][0]["message"]["content"].strip().strip("`").replace("yaml", "").strip()
+    return {"compressed": content}
+
 
 class AutoFillRequest(BaseModel):
     base_description: str
@@ -503,48 +451,23 @@ class AutoFillRequest(BaseModel):
 async def auto_fill_character(req: AutoFillRequest):
     sys = (
         "Eres un ingeniero experto en optimización de prompts para bots de roleplay. "
-        "Tu tarea es analizar una descripción en texto crudo o JSON y extraer toda la información, "
-        "repartiéndola en las categorías específicas de la tarjeta del personaje.\n\n"
-        "REGLA DE ORO: Los campos de texto largo DEBEN estar comprimidos en formato YAML estricto y denso (estilo W++), "
-        "usando arrays en una sola línea [a, b, c] para ahorrar tokens. Elimina la palabrería y redundancias.\n\n"
-        "Devuelve ÚNICAMENTE un objeto JSON válido con estas llaves exactas:\n"
-        "{\n"
-        '  "tagline": "Frase corta atractiva tipo eslogan (max 60 chars)",\n'
-        '  "personality": "Código YAML con Especie, Edad, Apariencia, Rasgos, Gustos, Odios, Metas",\n'
-        '  "lore": "Código YAML con el contexto del mundo, situación actual y relaciones",\n'
-        '  "speakingStyle": "Código YAML detallando tono, cadencia y manías al hablar",\n'
-        '  "emotionalTendencies": "Código YAML detallando cómo reacciona a diferentes estímulos",\n'
-        '  "exampleDialogues": "Ejemplos de diálogo deducidos. Formato: Usuario: ... / Nombre: ...",\n'
-        '  "tags": ["etiqueta1", "etiqueta2", "etiqueta3"]\n'
-        "}\n"
-        "No incluyas bloques de markdown (```) ni explicaciones, solo el JSON puro."
+        "Analiza la descripción y repártela en un objeto JSON válido con estas llaves exactas:\n"
+        "tagline, personality, lore, speakingStyle, emotionalTendencies, exampleDialogues, tags.\n"
+        "Los campos largos deben estar en formato YAML denso e hipercomprimido usando corchetes [a, b, c].\n"
+        "Output JSON only. No prose. No code fences."
     )
-    user_prompt = f"Descripción cruda:\n{req.base_description}\n\nMensaje inicial (para captar el tono):\n{req.initial_message}"
-    
     payload = {
         "model": DEEPSEEK_MODEL,
-        "messages": [
-            {"role": "system", "content": sys},
-            {"role": "user", "content": user_prompt},
-        ],
-        "temperature": 0.3, # Baja para garantizar que el JSON salga bien formateado
+        "messages": [{"role": "system", "content": sys}, {"role": "user", "content": f"Descripción:\n{req.base_description}\n\nMensaje:\n{req.initial_message}"}],
+        "temperature": 0.3,
         "max_tokens": 1500,
         "stream": False,
-        "thinking": {"type": "disabled"} # No necesita razonar, solo formatear datos
+        "thinking": {"type": "disabled"}
     }
-    
     data = await deepseek_call(payload)
-    try:
-        content = data["choices"][0]["message"]["content"].strip()
-        # Limpiar por si el modelo pone "```json"
-        if content.startswith("```"):
-            content = re.sub(r"^```(?:json)?\n?", "", content)
-            content = re.sub(r"\n?```$", "", content).strip()
-        
-        parsed = json.loads(content)
-        return {"character_data": parsed}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Error al parsear el JSON del modelo: {str(e)}\n\n{content}")
+    content = data["choices"][0]["message"]["content"].strip().strip("`").replace("json", "").strip()
+    return {"character_data": json.loads(content)}
+
 
 @api_router.post("/chat/stream")
 async def chat_stream(req: ChatRequest):
@@ -580,18 +503,13 @@ async def chat_stream(req: ChatRequest):
                 async with client.stream("POST", url, json=payload, headers=headers) as resp:
                     if resp.status_code >= 400:
                         err_bytes = await resp.aread()
-                        try:
-                            err_text = err_bytes.decode("utf-8", errors="ignore")
-                        except Exception:
-                            err_text = str(err_bytes)
-                        yield f"data: {json.dumps({'error': f'upstream {resp.status_code}: {err_text[:200]}'})}\n\n"
+                        yield f"data: {json.dumps({'error': f'upstream {resp.status_code}'})}\n\n"
                         yield "data: [DONE]\n\n"
                         sent_done = True
                         return
+                        
                     async for line in resp.aiter_lines():
-                        if not line:
-                            continue
-                        if not line.startswith("data:"):
+                        if not line or not line.startswith("data:"):
                             continue
                         data = line[5:].strip()
                         if data == "[DONE]":
@@ -602,11 +520,10 @@ async def chat_stream(req: ChatRequest):
                             obj = json.loads(data)
                             delta = obj.get("choices", [{}])[0].get("delta", {})
                             
-                            # 1. Recuperar los dos tipos de contenido que envía DeepSeek
                             reasoning = delta.get("reasoning_content")
                             content_str = delta.get("content")
 
-                            # 2. Convertir el reasoning_content nativo a etiquetas <think> para el frontend
+                            # 1. Manejo del pensamiento dinámico
                             if reasoning:
                                 if not has_started_thinking:
                                     has_started_thinking = True
@@ -614,18 +531,25 @@ async def chat_stream(req: ChatRequest):
                                 else:
                                     yield f"data: {json.dumps({'delta': reasoning})}\n\n"
                             
-                            # 3. Cuando empiece a llegar el contenido real, cerramos la etiqueta
+                            # 2. Manejo del contenido de respuesta (Filtra el molesto \n inicial)
                             if content_str is not None:
-                                if has_started_thinking and not has_finished_thinking:
+                                # FIX LOGICO IMPORTANTE: Si el modelo no usó razonamiento previo, forzar estado para evitar bloqueos
+                                if content_str and not has_started_thinking and not has_finished_thinking:
+                                    content_str = content_str.lstrip() # Remueve \n iniciales parásitos
+                                    yield f"data: {json.dumps({'delta': content_str})}\n\n"
                                     has_finished_thinking = True
-                                    yield f"data: {json.dumps({'delta': '</think>\\n' + content_str})}\n\n"
+                                # Si pensó y ahora pasa a la respuesta real, cerramos etiqueta limpiando saltos
+                                elif has_started_thinking and not has_finished_thinking:
+                                    has_finished_thinking = True
+                                    content_str = content_str.lstrip()
+                                    yield f"data: {json.dumps({'delta': '</think>\n' + content_str})}\n\n"
                                 elif content_str:
                                     yield f"data: {json.dumps({'delta': content_str})}\n\n"
                                     
                         except json.JSONDecodeError:
                             continue
-        except httpx.RequestError as e:
-            yield f"data: {json.dumps({'error': f'network: {str(e)[:120]}'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
         finally:
             if not sent_done:
                 yield "data: [DONE]\n\n"
@@ -643,22 +567,12 @@ async def chat_stream(req: ChatRequest):
 
 app.include_router(api_router)
 
-# ---------------------------------------------------------------------------
-# CORS
-# ---------------------------------------------------------------------------
 _raw_origins = os.environ.get("CORS_ORIGINS", "*")
 _origins_list = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 _allow_all = "*" in _origins_list
-
-_dev_origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
+_dev_origins = ["http://localhost:3000", "[http://127.0.0.1:3000](http://127.0.0.1:3000)", "http://localhost:5173", "[http://127.0.0.1:5173](http://127.0.0.1:5173)"]
 for o in _dev_origins:
-    if o not in _origins_list:
-        _origins_list.append(o)
+    if o not in _origins_list: _origins_list.append(o)
 
 app.add_middleware(
     CORSMiddleware,
