@@ -1,17 +1,70 @@
 import { STORAGE_KEYS, DEFAULT_AVATARS, DEFAULT_PROFILE, DEFAULT_SETTINGS, DEFAULT_EMOTION } from "./constants";
+import LZString from "lz-string";
+
+// ---- Helpers ----
 
 const safeParse = (raw, fallback) => {
   if (!raw) return fallback;
   try { return JSON.parse(raw); } catch { return fallback; }
 };
 
+// Intenta descomprimir con lz-string primero (datos nuevos),
+// si falla asume que es JSON plano (datos viejos sin comprimir).
+const safeLoad = (key, fallback) => {
+  const raw = localStorage.getItem(key);
+  if (!raw) return fallback;
+  try {
+    const decompressed = LZString.decompressFromUTF16(raw);
+    if (decompressed) return JSON.parse(decompressed);
+  } catch { /* no era lz-string, intentar como JSON plano */ }
+  try { return JSON.parse(raw); } catch { return fallback; }
+};
+
+// Guarda comprimido con lz-string. Si el storage está lleno lanza
+// una excepción controlada en lugar de dejar la app en estado roto.
+const safeSave = (key, value) => {
+  try {
+    const json = JSON.stringify(value);
+    const compressed = LZString.compressToUTF16(json);
+    localStorage.setItem(key, compressed);
+  } catch (e) {
+    if (e.name === "QuotaExceededError" || e.code === 22) {
+      // Lanzar un error con mensaje legible para que AppContext lo capture.
+      const err = new Error("STORAGE_FULL");
+      err.isStorageFull = true;
+      throw err;
+    }
+    throw e;
+  }
+};
+
+// Cuántos mensajes guardar por sesión como máximo.
+// Los mensajes más antiguos ya están capturados en el resumen (summary).
+const MAX_MESSAGES_STORED = 60;
+
+// Truncar mensajes viejos de todas las sesiones antes de guardar.
+const truncateSessions = (chats) => {
+  const out = {};
+  for (const [charId, bundle] of Object.entries(chats)) {
+    if (!bundle?.sessions) { out[charId] = bundle; continue; }
+    const sessions = {};
+    for (const [sid, session] of Object.entries(bundle.sessions)) {
+      sessions[sid] = {
+        ...session,
+        messages: Array.isArray(session.messages)
+          ? session.messages.slice(-MAX_MESSAGES_STORED)
+          : session.messages,
+      };
+    }
+    out[charId] = { ...bundle, sessions };
+  }
+  return out;
+};
+
 // ---- ID helpers ----
 export const newSessionId = () => `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 
 // ---- Migration ----
-// Old chat shape:    chats[charId] = { messages, summary, memories[string], scene }
-// New chat shape:    chats[charId] = { sessions: { [sid]: session }, activeSessionId }
-// Old memories were strings. New memories: { id, text, pinned, createdAt, category? }
 const upgradeMemories = (mems) => {
   return (mems || []).map((m, i) => {
     if (typeof m === "string") {
@@ -36,8 +89,7 @@ const buildSession = (overrides = {}, character = null) => ({
 
 const migrateCharacterChat = (oldChat, character) => {
   if (!oldChat) return null;
-  if (oldChat.sessions && oldChat.activeSessionId) return oldChat; // already new shape
-  // Wrap old single-chat into a session.
+  if (oldChat.sessions && oldChat.activeSessionId) return oldChat;
   const session = buildSession({
     id: newSessionId(),
     name: "Conversación principal",
@@ -63,20 +115,20 @@ export const migrateAllChats = (chats, characters) => {
 
 // ---- Public API ----
 
-export const loadCharacters = () => safeParse(localStorage.getItem(STORAGE_KEYS.characters), null);
-export const saveCharacters = (chars) => localStorage.setItem(STORAGE_KEYS.characters, JSON.stringify(chars));
+export const loadCharacters = () => safeLoad(STORAGE_KEYS.characters, null);
+export const saveCharacters = (chars) => safeSave(STORAGE_KEYS.characters, chars);
 
-export const loadChatsRaw = () => safeParse(localStorage.getItem(STORAGE_KEYS.chats), {});
-export const saveChats = (chats) => localStorage.setItem(STORAGE_KEYS.chats, JSON.stringify(chats));
+export const loadChatsRaw = () => safeLoad(STORAGE_KEYS.chats, {});
+export const saveChats = (chats) => safeSave(STORAGE_KEYS.chats, truncateSessions(chats));
 
-export const loadProfile = () => safeParse(localStorage.getItem(STORAGE_KEYS.profile), DEFAULT_PROFILE);
-export const saveProfile = (p) => localStorage.setItem(STORAGE_KEYS.profile, JSON.stringify(p));
+export const loadProfile = () => safeLoad(STORAGE_KEYS.profile, DEFAULT_PROFILE);
+export const saveProfile = (p) => safeSave(STORAGE_KEYS.profile, p);
 
 export const loadSettings = () => ({
   ...DEFAULT_SETTINGS,
-  ...safeParse(localStorage.getItem(STORAGE_KEYS.settings), {}),
+  ...safeLoad(STORAGE_KEYS.settings, {}),
 });
-export const saveSettings = (s) => localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(s));
+export const saveSettings = (s) => safeSave(STORAGE_KEYS.settings, s);
 
 // ---- Seed characters ----
 export const SEED_CHARACTERS = [
@@ -145,7 +197,6 @@ export const ensureSeed = () => {
   return existing;
 };
 
-// Initial load of chats with auto-migration.
 export const loadChats = (characters) => {
   const raw = loadChatsRaw();
   return migrateAllChats(raw, characters);
@@ -176,5 +227,4 @@ export const exportCharacter = (character, chat) => {
   return JSON.stringify({ version: 2, type: "character", character, chat: chat || null }, null, 2);
 };
 
-// Helper for session-aware operations.
 export { buildSession };
