@@ -222,16 +222,32 @@ export default function Chat() {
         }
 
         // If stream got cut off mid-thought, request a silent continuation.
+                // If stream got cut off mid-thought, request a silent continuation.
         if (finalContent && looksCutOff(finalContent)) {
           try {
+            // Usamos el payload base sin alterar
+            const basePayload = buildPayload(messagesWithUser);
             const contPayload = {
-              ...buildPayload([...messagesWithUser, { ...aiMsg, content: finalContent }]),
-              max_tokens: 200,
+              ...basePayload,
+              max_tokens: 400, // Espacio suficiente para terminar la frase
+              temperature: Math.max(0.4, (basePayload.temperature || 0.85) - 0.2), // Bajar la creatividad ayuda a unir la frase
             };
-            const tail = await chatContinue(contPayload);
+            
+            // Agregamos la respuesta cortada y la orden ESTRICTA de terminar la palabra
+            contPayload.messages.push({ role: "assistant", content: finalContent });
+            contPayload.messages.push({ 
+              role: "user", 
+              content: "[Continue exactly where you left off mid-sentence. Do not repeat. Finish the thought naturally and stop within a beat or two. Plain continuation only — no preamble.]" 
+            });
+
+            // OJO AQUÍ: Llamamos a chatComplete (Normal), NO a chatContinue
+            const tail = await chatComplete(contPayload);
+            
             if (tail && tail.trim()) {
+              // Pegamos el texto nuevo cuidando los espacios
               const glue = /[\s\n]$/.test(finalContent) || /^[ ,.!?*"\)\]]/.test(tail) ? "" : " ";
               finalContent = finalContent + glue + tail;
+              
               updateActiveSession(characterId, (s) => {
                 const msgs = [...s.messages];
                 const idx = msgs.findIndex(m => m.id === aiMsg.id);
@@ -241,7 +257,7 @@ export default function Chat() {
             }
           } catch { /* keep original */ }
         }
-      } else {
+
         // Fallback: non-streaming (auto-continue happens server-side).
         finalContent = await chatComplete(payload);
         updateActiveSession(characterId, (s) => {
