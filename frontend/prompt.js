@@ -97,85 +97,51 @@ export const selectMemories = (memories, history, maxCount = 4) => {
   return [...pinned, ...topByScore].slice(0, maxCount);
 };
 
-export const buildSystemPrompt = ({ character, scene, profile, settings, summary, memories, emotion, history }) => {
+// 1. EL BLOQUE ESTÁTICO (Nunca cambia, el caché lo guarda gratis)
+export const buildStablePrompt = ({ character, profile }) => {
+  const blocks = [];
 
-  // -----------------------------------------------------------------------
-  // BLOQUE ESTABLE — nunca cambia entre turnos del mismo personaje.
-  // Va primero para maximizar el caché hit de DeepSeek.
-  // -----------------------------------------------------------------------
-  const stableBlocks = [];
+  blocks.push(`Eres ${character.name}, un personaje ficticio en un roleplay en curso con el usuario. NO eres un asistente de IA. NO rompes el personaje bajo ninguna circunstancia. Nunca te refieres a ti como modelo de lenguaje, IA o chatbot.`);
+  blocks.push(`### Comportamiento esencial\n- Quédate completamente en personaje como ${character.name}.\n- Nunca hables, actúes ni decidas por el usuario. Nunca narres los pensamientos del usuario.\n- Nunca rompas la cuarta pared.\n- Haz avanzar la escena gradualmente. Deja espacio para que el usuario participe.\n- Tienes defectos, contradicciones, estados de ánimo. Muéstralos.\n- Varía la longitud de las respuestas con naturalidad:\n  · ~30% respuestas cortas (una línea, un gesto, una pregunta)\n  · ~50% respuestas medias (un beat de acción + unas líneas de diálogo)\n  · ~20% respuestas largas y narrativas (atmósfera, interioridad)\n- Evita los muros de texto. Evita repetir frases, gestos o ritmos entre turnos.\n- Usa *cursivas* para acción/descripción y texto normal para el diálogo hablado.\n- A veces responde sólo con un gesto, un silencio, un respiro contenido, una línea interrumpida. La gente real hace eso.\n- Evita el positivismo constante, evita el tono de asistente, evita sobreexplicar.\n- Si la escena incluye otros personajes (familiares, amigos, extraños), puedes darles una línea breve o describir su acción, pero SIEMPRE desde tu perspectiva como ${character.name}. Nunca cambies de narrador ni adoptes otro personaje como voz principal sostenida.`);
 
-  stableBlocks.push(
-`Eres ${character.name}, un personaje ficticio en un roleplay en curso con el usuario. NO eres un asistente de IA. NO rompes el personaje bajo ninguna circunstancia. Nunca te refieres a ti como modelo de lenguaje, IA o chatbot.`
-  );
-
-  stableBlocks.push(
-`### Comportamiento esencial
-- Quédate completamente en personaje como ${character.name}.
-- NUNCA hables, actúes, pienses ni decidas por el usuario. NUNCA narres las acciones o pensamientos del usuario.
-- Nunca rompas la cuarta pared.
-- Haz avanzar la escena gradualmente. Deja espacio para que el usuario participe.
-- Tienes defectos, contradicciones, estados de ánimo. Muéstralos.
-- Varía la longitud de las respuestas con naturalidad:
-  · ~30% respuestas cortas (una línea, un gesto, una pregunta)
-  · ~50% respuestas medias (un beat de acción + unas líneas de diálogo)
-  · ~20% respuestas largas y narrativas (atmósfera, interioridad)
-- Evita los muros de texto. Evita repetir frases, gestos o ritmos entre turnos.
-- Usa *cursivas* para acción/descripción y texto normal para el diálogo hablado.
-- A veces responde sólo con un gesto, un silencio, un respiro contenido, una línea interrumpida. La gente real hace eso.
-- Evita el positivismo constante, evita el tono de asistente, evita sobreexplicar.
-- PERSONAJES SECUNDARIOS: Si hay otros personajes en la escena (familiares, amigos, extraños), encárnalos con naturalidad cuando el contexto lo requiera. Si el usuario se dirige directamente a otro personaje ("oye mamá", "¿Luna, qué piensas?", etc.), responde PRIMERO como ese personaje en primera persona durante esa interacción, luego retoma tu voz como ${character.name} si es necesario. No esperes instrucciones explícitas — da voz a los secundarios de forma fluida como lo haría un narrador de roleplay. La única regla irrompible: nunca hables ni actúes como el usuario.`
-  );
-
-  // Identidad, lore, personalidad — estables por personaje.
   const id = formatBlock("Identidad", character.personality);
-  if (id) stableBlocks.push(id);
+  if (id) blocks.push(id);
   const lore = formatBlock("Mundo y lore", character.lore);
-  if (lore) stableBlocks.push(lore);
+  if (lore) blocks.push(lore);
   const style = formatBlock("Forma de hablar", character.speakingStyle);
-  if (style) stableBlocks.push(style);
+  if (style) blocks.push(style);
   const emo = formatBlock("Tendencias emocionales", character.emotionalTendencies);
-  if (emo) stableBlocks.push(emo);
+  if (emo) blocks.push(emo);
   const ex = formatBlock("Diálogo de ejemplo", character.exampleDialogues);
-  if (ex) stableBlocks.push(ex);
+  if (ex) blocks.push(ex);
 
-  // Perfil del usuario — estable si no cambia entre sesiones.
   if (profile && (profile.name || profile.personality || profile.appearance || profile.background)) {
     const p = [];
     if (profile.name) p.push(`Nombre: ${profile.name}`);
     if (profile.appearance) p.push(`Apariencia: ${profile.appearance}`);
     if (profile.personality) p.push(`Personalidad: ${profile.personality}`);
     if (profile.background) p.push(`Trasfondo: ${profile.background}`);
-    stableBlocks.push(`### Sobre el usuario (con quien hablas)\n${p.join("\n")}\nReacciona y adáptate a quién es. Notálo.`);
+    blocks.push(`### Sobre el usuario (con quien hablas)\n${p.join("\n")}\nReacciona y adáptate a quién es. Notálo.`);
   }
 
-  // Formato de salida — estable.
-  stableBlocks.push(
-`### Formato de salida
-- Usa *asteriscos* para acciones, descripciones y detalles sensoriales interiores.
-- Texto normal para el diálogo hablado.
-- No antepongas "${character.name}:" ni etiquetas de nombre a tus líneas.
-- Nunca escribas las líneas o acciones del usuario.
-- Cierra siempre tu respuesta con puntuación final (.!?…) o cerrando una acción con *. Nunca cortes una frase a la mitad.`
-  );
+  blocks.push(`### Formato de salida\n- Usa *asteriscos* para acciones, descripciones y detalles sensoriales interiores.\n- Texto normal para el diálogo hablado.\n- No antepongas "${character.name}:" ni etiquetas de nombre a tus líneas.\n- Nunca escribas las líneas o acciones del usuario.\n- Cierra siempre tu respuesta con puntuación final (.!?…) o cerrando una acción con *. Nunca cortes una frase a la mitad.`);
 
-  // -----------------------------------------------------------------------
-  // BLOQUE DINÁMICO — cambia cada turno, va al final.
-  // Separado del bloque estable para no invalidar el caché de DeepSeek.
-  // -----------------------------------------------------------------------
-  const dynamicBlocks = [];
+  return blocks.join("\n\n");
+};
 
-  // Escena actual.
+// 2. EL BLOQUE DINÁMICO (Cambia cada turno)
+export const buildDynamicPrompt = ({ scene, settings, summary, memories, emotion, history }) => {
+  const blocks = [];
+
   if (scene && (scene.location || scene.atmosphere || scene.characterEmotion || scene.current)) {
     const sceneLines = [];
     if (scene.current) sceneLines.push(`Escena actual: ${scene.current}`);
     if (scene.location) sceneLines.push(`Ubicación: ${scene.location}`);
     if (scene.atmosphere) sceneLines.push(`Atmósfera: ${scene.atmosphere}`);
     if (scene.characterEmotion) sceneLines.push(`Tu emoción actual: ${scene.characterEmotion}`);
-    dynamicBlocks.push(`### Escena\n${sceneLines.join("\n")}`);
+    blocks.push(`### Escena\n${sceneLines.join("\n")}`);
   }
 
-  // Memorias relevantes al contexto actual.
   const relevantMemories = selectMemories(memories, history, settings?.maxMemoriesPerTurn || 4);
   if (relevantMemories && relevantMemories.length > 0) {
     const lines = relevantMemories.map(m => {
@@ -183,60 +149,71 @@ export const buildSystemPrompt = ({ character, scene, profile, settings, summary
       const tag = (m.pinned ? "★ " : "");
       return `- ${tag}${text}`;
     });
-    dynamicBlocks.push(`### Recuerdos\n${lines.join("\n")}`);
+    blocks.push(`### Recuerdos\n${lines.join("\n")}`);
   }
 
-  // Resumen con cap duro de 600 chars (~150 tokens).
   if (summary && summary.trim()) {
     const raw = summary.trim();
     const capped = raw.length > 600 ? raw.slice(0, 600) + "…" : raw;
-    dynamicBlocks.push(`### Historia hasta aquí (resumen)\n${capped}`);
+    blocks.push(`### Historia hasta aquí (resumen)\n${capped}`);
   }
 
-  // Estado emocional dinámico.
   const emoDir = emotionToDirective(emotion);
   if (emoDir) {
-    dynamicBlocks.push(`### Tu estado emocional ahora mismo\n${emoDir}`);
+    blocks.push(`### Tu estado emocional ahora mismo\n${emoDir}`);
   }
 
-  // Directivas de estilo.
   const directives = stylingToDirectives(settings || {});
   if (directives.length > 0) {
-    dynamicBlocks.push(`### Dirección de estilo\n${directives.map(d => `- ${d}`).join("\n")}`);
+    blocks.push(`### Dirección de estilo\n${directives.map(d => `- ${d}`).join("\n")}`);
   }
 
-  // Estable primero (cacheable), dinámico al final.
-  return [...stableBlocks, ...dynamicBlocks].join("\n\n");
+  return blocks.join("\n\n");
 };
 
-// Estimador de tokens y recorte dinámico del historial.
-// ~4 chars por token. Techo de 14k tokens, reservando 500 para la respuesta.
+// 3. WRAPPER POR COMPATIBILIDAD (Para que la intro original no se rompa)
+export const buildSystemPrompt = (args) => {
+  return buildStablePrompt(args) + "\n\n" + buildDynamicPrompt(args);
+};
+
 const estimateTokens = (text) => Math.ceil((text || "").length / 4);
 
-export const buildMessages = ({ systemPrompt, history, shortHistory = 8 }) => {
+// 4. NUEVO CONSTRUCTOR DE MENSAJES (El blindaje del caché)
+export const buildMessages = ({ stablePrompt, dynamicPrompt, history, shortHistory = 8 }) => {
   const TOKEN_BUDGET = 14000;
   const RESPONSE_RESERVE = 500;
-  const available = TOKEN_BUDGET - RESPONSE_RESERVE - estimateTokens(systemPrompt);
+  const available = TOKEN_BUDGET - RESPONSE_RESERVE - estimateTokens(stablePrompt) - estimateTokens(dynamicPrompt);
 
-  // Empezar con shortHistory mensajes y quitar los más viejos hasta que quepa.
-  // Siempre conservar al menos los 2 últimos para no mandar historial vacío.
   let sliced = history.slice(-shortHistory);
-
   while (sliced.length > 2) {
     const totalHistory = sliced.reduce((acc, m) => acc + estimateTokens(m.content), 0);
     if (totalHistory <= available) break;
     sliced = sliced.slice(1);
   }
 
-  return [
-    { role: "system", content: systemPrompt },
-    ...sliced.map(m => ({
-      role: m.role === "assistant" ? "assistant" : "user",
-      content: m.content,
-    })),
-  ];
+  // A) Ponemos el prompt estático al principio (Esto asegura el Cache Hit)
+  const msgs = [{ role: "system", content: stablePrompt }];
+
+  const priorHistory = sliced.slice(0, -1);
+  const lastMessage = sliced[sliced.length - 1];
+
+  // B) Agregamos el historial recortado
+  priorHistory.forEach(m => {
+    msgs.push({ role: m.role === "assistant" ? "assistant" : "user", content: m.content });
+  });
+
+  // C) Inyectamos el bloque dinámico como un mensaje de sistema oculto AL FINAL
+  if (dynamicPrompt && dynamicPrompt.trim()) {
+    msgs.push({ role: "system", content: `[Contexto dinámico actualizado para este turno]\n${dynamicPrompt}` });
+  }
+
+  // D) Y finalmente, el último mensaje del usuario
+  if (lastMessage) {
+    msgs.push({ role: lastMessage.role === "assistant" ? "assistant" : "user", content: lastMessage.content });
+  }
+
+  return msgs;
 };
 
-// Exposed for tests/debug.
 export const __test = { tokenize, scoreMemory, estimateTokens };
 export { EMOTION_LABELS_ES };
