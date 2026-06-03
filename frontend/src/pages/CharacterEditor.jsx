@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Trash2, Save, Image as ImageIcon, Download } from "lucide-react";
 import { useApp, blankCharacter } from "../context/AppContext";
 import { TopBar } from "../components/TopBar";
 import { DEFAULT_AVATARS } from "../lib/constants";
 import { exportCharacter } from "../lib/storage";
 import { toast } from "sonner";
-import { Trash2, Save, Image as ImageIcon, Download, Wand2 } from "lucide-react";
 import { autoFillCharacter } from "../lib/api";
+import { Trash2, Save, Image as ImageIcon, Download, Wand2 } from "lucide-react";
+
 
 
 const Field = ({ label, hint, children, testId }) => (
