@@ -73,7 +73,7 @@ export default function Chat() {
 
   const currentParams = useMemo(() => stylingToParams(settings), [settings]);
 
-    const buildPayload = useCallback((history) => {
+  const buildPayload = useCallback((history) => {
     // 1. Preparamos los argumentos
     const args = {
       character, 
@@ -105,7 +105,6 @@ export default function Chat() {
   // ---- Background updates (memory / summary / emotion) ----
   const runBackgroundUpdates = useCallback(async (updatedMessages, currentSummary, currentMemories, currentEmotion) => {
     const tasks = [];
-    // Summary: more frequently than before; centers on RECENT exchange.
     if (updatedMessages.length >= (settings.summarizeEvery || 8)) {
       const cutoff = Math.max(0, updatedMessages.length - settings.shortHistory);
       if (cutoff >= 2) {
@@ -117,7 +116,6 @@ export default function Chat() {
         );
       }
     }
-    // Memory: continuously updated. Look at last N messages, dedupe against existing.
     if (updatedMessages.length >= (settings.extractMemoryEvery || 4)) {
       const lastN = updatedMessages.slice(-(settings.extractMemoryEvery || 4)).map(m => ({ role: m.role, content: m.content }));
       const existingTexts = (currentMemories || []).map(m => (typeof m === "string" ? m : m.text));
@@ -127,7 +125,6 @@ export default function Chat() {
           .catch(() => null)
       );
     }
-    // Emotion: periodic update.
     if (updatedMessages.length >= 3 && updatedMessages.length % (settings.emotionEvery || 6) === 0) {
       const tail = updatedMessages.slice(-6).map(m => ({ role: m.role, content: m.content }));
       tasks.push(
@@ -154,7 +151,6 @@ export default function Chat() {
               merged.push({ id: `mem_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`, text: m, pinned: false, createdAt: Date.now() });
             }
           }
-          // Cap: keep all pinned + last 80 unpinned.
           const pinned = merged.filter(m => m.pinned);
           const unpinned = merged.filter(m => !m.pinned).slice(-30);
           next.memories = [...pinned, ...unpinned];
@@ -190,14 +186,12 @@ export default function Chat() {
       const payload = buildPayload(messagesWithUser);
 
       if (useStreaming) {
-        // Accumulate streamed deltas, flushing into state in small batches.
         let buffer = "";
         let lastFlush = Date.now();
         for await (const delta of chatStream(payload, { signal: controller.signal })) {
           finalContent += delta;
           buffer += delta;
           const now = Date.now();
-          // Flush ~every 50ms or 25 chars to keep React updates manageable.
           if (now - lastFlush > 50 || buffer.length > 25) {
             const snapshot = finalContent;
             updateActiveSession(characterId, (s) => {
@@ -210,7 +204,6 @@ export default function Chat() {
             lastFlush = now;
           }
         }
-        // Final flush.
         if (buffer.length > 0) {
           const snapshot = finalContent;
           updateActiveSession(characterId, (s) => {
@@ -221,32 +214,29 @@ export default function Chat() {
           });
         }
 
-        // If stream got cut off mid-thought, request a silent continuation.
-                // If stream got cut off mid-thought, request a silent continuation.
-        if (finalContent && looksCutOff(finalContent)) {
+        // Limpiamos los espacios en blanco finales antes de verificar el corte de frase
+        const trimmedContent = finalContent ? finalContent.trim() : "";
+
+        if (trimmedContent && looksCutOff(trimmedContent)) {
           try {
-            // Usamos el payload base sin alterar
             const basePayload = buildPayload(messagesWithUser);
             const contPayload = {
               ...basePayload,
-              max_tokens: 400, // Espacio suficiente para terminar la frase
-              temperature: Math.max(0.4, (basePayload.temperature || 0.85) - 0.2), // Bajar la creatividad ayuda a unir la frase
+              max_tokens: 300,
+              temperature: Math.max(0.4, (basePayload.temperature || 0.85) - 0.2),
             };
             
-            // Agregamos la respuesta cortada y la orden ESTRICTA de terminar la palabra
-            contPayload.messages.push({ role: "assistant", content: finalContent });
+            contPayload.messages.push({ role: "assistant", content: trimmedContent });
             contPayload.messages.push({ 
               role: "user", 
-              content: "[Continue exactly where you left off mid-sentence. Do not repeat. Finish the thought naturally and stop within a beat or two. Plain continuation only — no preamble.]" 
+              content: "[Continue exactly from the last character. No preamble. Plain text continuation only.]" 
             });
 
-            // OJO AQUÍ: Llamamos a chatComplete (Normal), NO a chatContinue
             const tail = await chatComplete(contPayload);
             
             if (tail && tail.trim()) {
-              // Pegamos el texto nuevo cuidando los espacios
-              const glue = /[\s\n]$/.test(finalContent) || /^[ ,.!?*"\)\]]/.test(tail) ? "" : " ";
-              finalContent = finalContent + glue + tail;
+              const glue = /^[ ,.!?*"\)\]]/.test(tail) ? "" : " ";
+              finalContent = trimmedContent + glue + tail;
               
               updateActiveSession(characterId, (s) => {
                 const msgs = [...s.messages];
@@ -257,8 +247,8 @@ export default function Chat() {
             }
           } catch { /* keep original */ }
         }
-
-        // Fallback: non-streaming (auto-continue happens server-side).
+      } else {
+        // CORRECCIÓN: Colocar el fallback síncrono estrictamente dentro de un bloque else
         finalContent = await chatComplete(payload);
         updateActiveSession(characterId, (s) => {
           const msgs = [...s.messages];
@@ -269,22 +259,19 @@ export default function Chat() {
       }
 
       if (!finalContent.trim()) {
-        // Empty response — strip the placeholder so we don't leave an empty bubble.
         updateActiveSession(characterId, (s) => ({ ...s, messages: s.messages.filter(m => m.id !== aiMsg.id) }));
         toast.error("El modelo devolvió una respuesta vacía. Inténtalo de nuevo.");
         return;
       }
 
-      // Background updates use the final settled state.
       const settled = [...messagesWithUser, { ...aiMsg, content: finalContent }];
       runBackgroundUpdates(settled, session.summary, session.memories, session.emotion);
     } catch (err) {
       if (err.name === "AbortError") {
-        // user-cancelled — leave the partial.
+        // user-cancelled
       } else {
         console.error(err);
         toast.error("No se pudo contactar con el modelo. Revisa tu clave de DeepSeek.");
-        // Remove the empty AI placeholder if nothing arrived.
         if (!finalContent) {
           updateActiveSession(characterId, (s) => ({ ...s, messages: s.messages.filter(m => m.id !== aiMsg.id) }));
         }
@@ -296,7 +283,6 @@ export default function Chat() {
     }
   };
 
-  // Continue scene without user input. Different from regenerate.
   const handleContinue = async () => {
     if (!character || !session || busy) return;
     const messages = session.messages || [];
@@ -323,17 +309,12 @@ export default function Chat() {
     }
   };
 
-  // EDIT message — robust against the "deleted AI then edit doesn't regen" bug.
-  // Behavior:
-  //   - If editing a USER message: trim everything after it, then generate a fresh AI reply.
-  //   - If editing an ASSISTANT message: just update its content in-place (do not auto-regen).
   const handleEdit = async (msgIndex, newContent) => {
     const messages = session?.messages || [];
     const original = messages[msgIndex];
     if (!original) return;
 
     if (original.role === "user") {
-      // Trim AFTER this user message — but keep the user message itself.
       const trimmed = messages.slice(0, msgIndex + 1);
       trimmed[msgIndex] = { ...original, content: newContent };
       updateActiveSession(characterId, (s) => ({ ...s, messages: trimmed }));
@@ -354,7 +335,6 @@ export default function Chat() {
         setStreamingPlaceholder(false);
       }
     } else {
-      // Editing AI message — just update in place. Variants are reset.
       const next = [...messages];
       next[msgIndex] = { ...original, content: newContent, variants: [newContent], variantIndex: 0 };
       updateActiveSession(characterId, (s) => ({ ...s, messages: next }));
@@ -368,7 +348,6 @@ export default function Chat() {
     updateActiveSession(characterId, (c) => ({ ...c, messages: next }));
   };
 
-  // Regenerate — only the LAST AI message. Graduated intensity by attempt count.
   const handleRegenerate = async (msgIndex) => {
     const messages = session?.messages || [];
     const target = messages[msgIndex];
@@ -376,7 +355,7 @@ export default function Chat() {
 
     const history = messages.slice(0, msgIndex);
     const existingVariants = target.variants && target.variants.length > 0 ? target.variants : [target.content];
-    const attempt = existingVariants.length; // 1st regen -> attempt=1, 2nd -> 2, etc.
+    const attempt = existingVariants.length;
 
     setBusy(true);
     setStreamingPlaceholder(true);
@@ -525,9 +504,6 @@ export default function Chat() {
           {messages.map((m, idx) => {
             const isLastAI = m.role === "assistant" && idx === messages.length - 1;
             const isStreamingThis = streamingMsgId === m.id;
-            // Skip rendering the streaming bubble while it has no content yet —
-            // we'll show the dots placeholder below instead. Once any delta has
-            // arrived, render normally so the typewriter effect is visible.
             if (isStreamingThis && (!m.content || m.content.length === 0)) return null;
             return (
               <MessageBubble
@@ -570,7 +546,6 @@ export default function Chat() {
             </div>
           )}
 
-          {/* "Continuar chat" — visible when there are messages and we're idle. */}
           {!busy && !streamingMsgId && messages.length >= 1 && messages[messages.length - 1]?.role === "assistant" && (
             <div className="flex justify-center pt-1">
               <button
@@ -645,3 +620,4 @@ export default function Chat() {
     </div>
   );
 }
+
