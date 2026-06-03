@@ -312,7 +312,7 @@ async def chat_continue(req: ContinueRequest):
         "model": DEEPSEEK_MODEL,
         "messages": msgs,
         "temperature": min(1.5, (req.temperature or 0.85) + 0.1),
-        "max_tokens": min(req.max_tokens or 400, 420),
+        "max_tokens": min(req.max_tokens or 600, 800),
         "presence_penalty": min(2.0, (req.presence_penalty or 0.7) + 0.15),
         "frequency_penalty": min(2.0, (req.frequency_penalty or 0.45) + 0.1),
         "top_p": req.top_p,
@@ -332,7 +332,7 @@ async def chat_continue(req: ContinueRequest):
             + [{"role": "assistant", "content": content}]
             + [{"role": "user", "content": "[Continue mid-sentence. Do not repeat. Finish the thought naturally and stop.]"}]
         )
-        cont_payload["max_tokens"] = 180
+        cont_payload["max_tokens"] = 400
         cont_payload["temperature"] = max(0.4, payload["temperature"] - 0.2)
         try:
             cdata = await deepseek_call(cont_payload)
