@@ -79,6 +79,13 @@ export const friendlyError = (err) => {
   return "Algo salió mal. Inténtalo de nuevo.";
 };
 
+export const autoFillCharacter = async ({ base_description, initial_message }) => {
+  const { data } = await withRetry(() =>
+    client.post("/character/auto-fill", { base_description, initial_message })
+  );
+  return data.character_data;
+};
+
 // ---- Streaming endpoint ----
 // Yields text deltas as they arrive from DeepSeek. The caller accumulates them
 // to render a typewriter effect. Supports cancellation via AbortController.
