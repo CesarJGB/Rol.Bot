@@ -3,14 +3,39 @@ import { Pencil, Trash2, RotateCw, ChevronLeft, ChevronRight, Check, X } from "l
 
 const renderContent = (text) => {
   if (!text) return null;
-  const parts = text.split(/(\*[^*]+\*)/g);
-  return parts.map((p, i) => {
+
+  // 1. Detectar si el modelo está en fase de pensamiento (abrió la etiqueta pero no la ha cerrado)
+  const isThinking = text.includes("<think>") && !text.includes("</think>");
+
+  // 2. Eliminar el bloque de pensamiento del texto visible usando Regex.
+  // Esto elimina desde <think> hasta </think> O hasta el final del string si aún no se ha cerrado.
+  const cleanText = text.replace(/<think>[\s\S]*?(<\/think>|$)/gi, "").trim();
+
+  // 3. Procesar los asteriscos para las acciones (tu lógica original)
+  const parts = cleanText.split(/(\*[^*]+\*)/g);
+  const renderedText = parts.map((p, i) => {
     if (/^\*[^*]+\*$/.test(p)) {
       return <span key={i} className="italic text-[#A1A1AA]">{p.slice(1, -1)}</span>;
     }
     return <span key={i}>{p}</span>;
   });
+
+  return (
+    <>
+      {/* Mostrar indicador solo mientras está pensando */}
+      {isThinking && (
+        <div className="mb-3 text-[11px] uppercase tracking-wider text-[#C6A45C]/70 flex items-center gap-1.5 opacity-80">
+          <span className="dot bg-[#C6A45C]/70 w-1.5 h-1.5 rounded-full" />
+          <span className="dot bg-[#C6A45C]/70 w-1.5 h-1.5 rounded-full" />
+          <span className="dot bg-[#C6A45C]/70 w-1.5 h-1.5 rounded-full" />
+          <span className="ml-1">Analizando la escena</span>
+        </div>
+      )}
+      {renderedText}
+    </>
+  );
 };
+
 
 export const MessageBubble = ({
   message,
