@@ -495,6 +495,56 @@ async def update_emotion(req: EmotionRequest):
     except json.JSONDecodeError:
         return {"state": current}
 
+class AutoFillRequest(BaseModel):
+    base_description: str
+    initial_message: Optional[str] = ""
+
+@api_router.post("/character/auto-fill")
+async def auto_fill_character(req: AutoFillRequest):
+    sys = (
+        "Eres un ingeniero experto en optimización de prompts para bots de roleplay. "
+        "Tu tarea es analizar una descripción en texto crudo o JSON y extraer toda la información, "
+        "repartiéndola en las categorías específicas de la tarjeta del personaje.\n\n"
+        "REGLA DE ORO: Los campos de texto largo DEBEN estar comprimidos en formato YAML estricto y denso (estilo W++), "
+        "usando arrays en una sola línea [a, b, c] para ahorrar tokens. Elimina la palabrería y redundancias.\n\n"
+        "Devuelve ÚNICAMENTE un objeto JSON válido con estas llaves exactas:\n"
+        "{\n"
+        '  "tagline": "Frase corta atractiva tipo eslogan (max 60 chars)",\n'
+        '  "personality": "Código YAML con Especie, Edad, Apariencia, Rasgos, Gustos, Odios, Metas",\n'
+        '  "lore": "Código YAML con el contexto del mundo, situación actual y relaciones",\n'
+        '  "speakingStyle": "Código YAML detallando tono, cadencia y manías al hablar",\n'
+        '  "emotionalTendencies": "Código YAML detallando cómo reacciona a diferentes estímulos",\n'
+        '  "exampleDialogues": "Ejemplos de diálogo deducidos. Formato: Usuario: ... / Nombre: ...",\n'
+        '  "tags": ["etiqueta1", "etiqueta2", "etiqueta3"]\n'
+        "}\n"
+        "No incluyas bloques de markdown (```) ni explicaciones, solo el JSON puro."
+    )
+    user_prompt = f"Descripción cruda:\n{req.base_description}\n\nMensaje inicial (para captar el tono):\n{req.initial_message}"
+    
+    payload = {
+        "model": DEEPSEEK_MODEL,
+        "messages": [
+            {"role": "system", "content": sys},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.3, # Baja para garantizar que el JSON salga bien formateado
+        "max_tokens": 1500,
+        "stream": False,
+        "thinking": {"type": "disabled"} # No necesita razonar, solo formatear datos
+    }
+    
+    data = await deepseek_call(payload)
+    try:
+        content = data["choices"][0]["message"]["content"].strip()
+        # Limpiar por si el modelo pone "```json"
+        if content.startswith("```"):
+            content = re.sub(r"^```(?:json)?\n?", "", content)
+            content = re.sub(r"\n?```$", "", content).strip()
+        
+        parsed = json.loads(content)
+        return {"character_data": parsed}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Error al parsear el JSON del modelo: {str(e)}\n\n{content}")
 
 @api_router.post("/chat/stream")
 async def chat_stream(req: ChatRequest):
