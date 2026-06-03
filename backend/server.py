@@ -382,6 +382,7 @@ async def summarize(req: SummarizeRequest):
         "temperature": 0.45,
         "max_tokens": 260,
         "stream": False,
+        "thinking": {"type": "disabled"},
     }
     data = await deepseek_call(payload)
     try:
@@ -422,6 +423,7 @@ async def extract_memories(req: MemoryRequest):
         "temperature": 0.35,
         "max_tokens": 160,
         "stream": False,
+        "thinking": {"type": "disabled"},
     }
     data = await deepseek_call(payload)
     try:
@@ -471,6 +473,7 @@ async def update_emotion(req: EmotionRequest):
         "temperature": 0.3,
         "max_tokens": 120,
         "stream": False,
+        "thinking": {"type": "disabled"},
     }
     data = await deepseek_call(payload)
     try:
