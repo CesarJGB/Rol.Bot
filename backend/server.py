@@ -41,7 +41,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     temperature: Optional[float] = 0.85
-    max_tokens: Optional[int] = 400
+    max_tokens: Optional[int] = 800  # <- Aumentado a 800
     presence_penalty: Optional[float] = 0.7
     frequency_penalty: Optional[float] = 0.45
     top_p: Optional[float] = 0.95
@@ -54,7 +54,7 @@ class ChatRequest(BaseModel):
 class ContinueRequest(BaseModel):
     messages: List[ChatMessage]
     temperature: Optional[float] = 0.85
-    max_tokens: Optional[int] = 400
+    max_tokens: Optional[int] = 800  # <- Aumentado a 800
     presence_penalty: Optional[float] = 0.7
     frequency_penalty: Optional[float] = 0.45
     top_p: Optional[float] = 0.95
@@ -97,9 +97,6 @@ async def deepseek_call(payload: Dict[str, Any]) -> Dict[str, Any]:
         except httpx.RequestError as e:
             raise HTTPException(status_code=502, detail=f"DeepSeek network error: {e}")
 
-    print("STATUS:", resp.status_code)
-    print("RAW RESPONSE:", resp.text)
-
     if resp.status_code >= 400:
         try:
             err = resp.json()
@@ -120,8 +117,6 @@ async def deepseek_call(payload: Dict[str, Any]) -> Dict[str, Any]:
             status_code=500,
             detail=f"Invalid JSON response: {resp.text}"
         )
-
-    print("PARSED RESPONSE:", data)
 
     return data
 
@@ -212,7 +207,7 @@ async def chat(req: ChatRequest):
             + [{"role": "assistant", "content": content}]
             + [{"role": "user", "content": "[Continue exactly where you left off mid-sentence. Do not repeat. Finish the thought naturally and stop within a beat or two. Plain continuation only — no preamble.]"}]
         )
-        cont_payload["max_tokens"] = min(220, req.max_tokens or 400)
+        cont_payload["max_tokens"] = min(600, req.max_tokens or 800) # <- Ajuste de tokens
         cont_payload["temperature"] = max(0.4, (req.temperature or 0.85) - 0.2)
         try:
             cdata = await deepseek_call(cont_payload)
@@ -275,7 +270,7 @@ async def chat_regenerate(req: ChatRequest):
             + [{"role": "assistant", "content": content}]
             + [{"role": "user", "content": "[Continue mid-sentence. Do not repeat. Finish the thought naturally and stop.]"}]
         )
-        cont_payload["max_tokens"] = min(220, req.max_tokens or 400)
+        cont_payload["max_tokens"] = min(600, req.max_tokens or 800) # <- Ajuste de tokens
         cont_payload["temperature"] = max(0.4, payload["temperature"] - 0.3)
         try:
             cdata = await deepseek_call(cont_payload)
@@ -290,11 +285,8 @@ async def chat_regenerate(req: ChatRequest):
 
 @api_router.post("/chat/continue")
 async def chat_continue(req: ContinueRequest):
-    """Advance the scene without a new user message."""
     msgs = [m.model_dump() for m in req.messages]
 
-    # FIX: nudge más estricto — prohíbe explícitamente inventar contexto
-    # o hablar por el usuario, y fuerza continuación directa desde el último beat.
     nudge = (
         "[CONTINUE THE SCENE — ONE BEAT FORWARD]\n"
         "Continue DIRECTLY from where the last message ended. Do NOT rewind, do NOT re-introduce context, "
@@ -312,7 +304,7 @@ async def chat_continue(req: ContinueRequest):
         "model": DEEPSEEK_MODEL,
         "messages": msgs,
         "temperature": min(1.5, (req.temperature or 0.85) + 0.1),
-        "max_tokens": min(req.max_tokens or 600, 800),
+        "max_tokens": min(req.max_tokens or 800, 1000), # <- Ajuste de tokens
         "presence_penalty": min(2.0, (req.presence_penalty or 0.7) + 0.15),
         "frequency_penalty": min(2.0, (req.frequency_penalty or 0.45) + 0.1),
         "top_p": req.top_p,
@@ -332,7 +324,7 @@ async def chat_continue(req: ContinueRequest):
             + [{"role": "assistant", "content": content}]
             + [{"role": "user", "content": "[Continue mid-sentence. Do not repeat. Finish the thought naturally and stop.]"}]
         )
-        cont_payload["max_tokens"] = 400
+        cont_payload["max_tokens"] = 600 # <- Ajuste de tokens
         cont_payload["temperature"] = max(0.4, payload["temperature"] - 0.2)
         try:
             cdata = await deepseek_call(cont_payload)
@@ -530,6 +522,9 @@ async def chat_stream(req: ChatRequest):
 
     async def event_generator():
         sent_done = False
+        has_started_thinking = False
+        has_finished_thinking = False
+        
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
                 async with client.stream("POST", url, json=payload, headers=headers) as resp:
@@ -555,9 +550,28 @@ async def chat_stream(req: ChatRequest):
                             return
                         try:
                             obj = json.loads(data)
-                            delta = obj.get("choices", [{}])[0].get("delta", {}).get("content")
-                            if delta:
-                                yield f"data: {json.dumps({'delta': delta})}\n\n"
+                            delta = obj.get("choices", [{}])[0].get("delta", {})
+                            
+                            # 1. Recuperar los dos tipos de contenido que envía DeepSeek
+                            reasoning = delta.get("reasoning_content")
+                            content_str = delta.get("content")
+
+                            # 2. Convertir el reasoning_content nativo a etiquetas <think> para el frontend
+                            if reasoning:
+                                if not has_started_thinking:
+                                    has_started_thinking = True
+                                    yield f"data: {json.dumps({'delta': '<think>' + reasoning})}\n\n"
+                                else:
+                                    yield f"data: {json.dumps({'delta': reasoning})}\n\n"
+                            
+                            # 3. Cuando empiece a llegar el contenido real, cerramos la etiqueta
+                            if content_str is not None:
+                                if has_started_thinking and not has_finished_thinking:
+                                    has_finished_thinking = True
+                                    yield f"data: {json.dumps({'delta': '</think>\\n' + content_str})}\n\n"
+                                elif content_str:
+                                    yield f"data: {json.dumps({'delta': content_str})}\n\n"
+                                    
                         except json.JSONDecodeError:
                             continue
         except httpx.RequestError as e:
