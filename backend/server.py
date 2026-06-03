@@ -515,7 +515,6 @@ async def chat_stream(req: ChatRequest):
         "frequency_penalty": req.frequency_penalty,
         "top_p": req.top_p,
         "stream": True,
-        "thinking": {"type": "disabled"},
     }
     if req.stop:
         payload["stop"] = req.stop
