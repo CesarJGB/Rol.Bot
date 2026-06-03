@@ -6,6 +6,9 @@ import { TopBar } from "../components/TopBar";
 import { DEFAULT_AVATARS } from "../lib/constants";
 import { exportCharacter } from "../lib/storage";
 import { toast } from "sonner";
+import { Trash2, Save, Image as ImageIcon, Download, Wand2 } from "lucide-react";
+import { autoFillCharacter } from "../lib/api";
+
 
 const Field = ({ label, hint, children, testId }) => (
   <div className="mb-5" data-testid={testId ? `field-${testId}` : undefined}>
@@ -50,6 +53,43 @@ const compressImage = (file) =>
     img.onerror = reject;
     img.src = url;
   });
+
+  const [autofilling, setAutofilling] = useState(false);
+
+  const handleAutoFill = async () => {
+    // Usamos el campo "Personalidad" como la caja donde el usuario pega su JSON crudo
+    const baseDesc = form.personality || form.lore || "";
+    if (baseDesc.trim().length < 20) {
+      toast.error("Pega tu JSON o texto base en el campo 'Personalidad' primero.");
+      return;
+    }
+
+    setAutofilling(true);
+    toast.info("Analizando y repartiendo en YAML...");
+    try {
+      const data = await autoFillCharacter({
+        base_description: baseDesc,
+        initial_message: form.initialMessage || ""
+      });
+      
+      // Actualizamos todo el formulario de golpe con lo que devolvió la IA
+      setForm(s => ({
+        ...s,
+        tagline: data.tagline || s.tagline,
+        personality: data.personality || s.personality,
+        lore: data.lore || s.lore,
+        speakingStyle: data.speakingStyle || s.speakingStyle,
+        emotionalTendencies: data.emotionalTendencies || s.emotionalTendencies,
+        exampleDialogues: data.exampleDialogues || s.exampleDialogues,
+        tags: data.tags?.length ? data.tags : s.tags,
+      }));
+      toast.success("¡Tarjeta auto-completada con éxito!");
+    } catch (err) {
+      toast.error("Error al procesar: " + err.message);
+    } finally {
+      setAutofilling(false);
+    }
+  };
 
 export default function CharacterEditor() {
   const navigate = useNavigate();
@@ -118,20 +158,33 @@ export default function CharacterEditor() {
   const isNew = !characters.find(c => c.id === form.id);
 
   return (
-    <div className="min-h-screen app-bg pb-24">
+        <div className="min-h-screen app-bg pb-24">
       <TopBar
         title={isNew ? "Nuevo personaje" : form.name || "Editar"}
         subtitle={isNew ? "Creación" : "Editando"}
         right={
-          <button
-            data-testid="save-character-button"
-            onClick={handleSave}
-            className="inline-flex items-center gap-1.5 bg-[#C6A45C] hover:bg-[#DBC184] text-[#111111] rounded-full px-4 py-2 text-sm font-medium transition-all"
-          >
-            <Save size={14} /> Guardar
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleAutoFill}
+              disabled={autofilling}
+              className="inline-flex items-center gap-1.5 border border-[#C6A45C]/50 hover:bg-[#C6A45C]/10 text-[#C6A45C] disabled:opacity-50 rounded-full px-4 py-2 text-sm font-medium transition-all"
+              title="Pega tu JSON en Personalidad y la IA rellenará todo en YAML"
+            >
+              <Wand2 size={14} />
+              {autofilling ? "Pensando..." : "Auto-Rellenar"}
+            </button>
+            
+            <button
+              data-testid="save-character-button"
+              onClick={handleSave}
+              className="inline-flex items-center gap-1.5 bg-[#C6A45C] hover:bg-[#DBC184] text-[#111111] rounded-full px-4 py-2 text-sm font-medium transition-all"
+            >
+              <Save size={14} /> Guardar
+            </button>
+          </div>
         }
       />
+
 
       <div className="max-w-2xl mx-auto px-4 py-6 relative z-10">
         <div className="flex items-center gap-5 mb-8">
