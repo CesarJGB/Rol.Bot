@@ -49,13 +49,9 @@ export default function Chat() {
   const abortRef = useRef(null);
   const bgUpdateInFlight = useRef(null);
 
-  // Flush pending saves when navigating away from a character.
-  const prevCharId = useRef(characterId);
+  // Flush pending saves when navigating away or unmounting.
   useEffect(() => {
-    if (prevCharId.current !== characterId) {
-      flushChats();
-      prevCharId.current = characterId;
-    }
+    return () => flushChats();
   }, [characterId, flushChats]);
 
   // Ensure character has an active session.
