@@ -29,6 +29,7 @@ export default function Chat() {
     getCharacter, getBundle, getActiveSession,
     ensureSession, createSession, switchSession, renameSession, deleteSession,
     updateActiveSession, resetActiveSession,
+    flushChats,
     profile, settings,
   } = useApp();
 
@@ -47,6 +48,15 @@ export default function Chat() {
   const scrollerRef = useRef(null);
   const abortRef = useRef(null);
   const bgUpdateInFlight = useRef(null);
+
+  // Flush pending saves when navigating away from a character.
+  const prevCharId = useRef(characterId);
+  useEffect(() => {
+    if (prevCharId.current !== characterId) {
+      flushChats();
+      prevCharId.current = characterId;
+    }
+  }, [characterId, flushChats]);
 
   // Ensure character has an active session.
   useEffect(() => {

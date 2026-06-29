@@ -57,13 +57,28 @@ export const AppProvider = ({ children }) => {
   const [settings, setSettings] = useState(() => loadSettings());
 
   const chatsSaveTimer = useRef(null);
+  const chatsRef = useRef(chats);
+  chatsRef.current = chats;
+
+  const flushChats = useCallback(() => {
+    if (chatsSaveTimer.current) {
+      clearTimeout(chatsSaveTimer.current);
+      chatsSaveTimer.current = null;
+      trySave(saveChats, chatsRef.current);
+    }
+  }, []);
 
   useEffect(() => { trySave(saveCharacters, characters); }, [characters]);
   useEffect(() => {
     if (chatsSaveTimer.current) clearTimeout(chatsSaveTimer.current);
-    chatsSaveTimer.current = setTimeout(() => { trySave(saveChats, chats); }, 800);
+    chatsSaveTimer.current = setTimeout(() => { chatsSaveTimer.current = null; trySave(saveChats, chats); }, 800);
     return () => { if (chatsSaveTimer.current) clearTimeout(chatsSaveTimer.current); };
   }, [chats]);
+  useEffect(() => {
+    const handleBeforeUnload = () => flushChats();
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [flushChats]);
   useEffect(() => { trySave(saveProfile, profile); }, [profile]);
   useEffect(() => { trySave(saveSettings, settings); }, [settings]);
 
@@ -224,7 +239,8 @@ export const AppProvider = ({ children }) => {
     getBundle, getActiveSession,
     ensureSession, createSession, switchSession, renameSession, deleteSession,
     updateActiveSession, resetActiveSession,
-  }), [characters, chats, profile, settings, upsertCharacter, deleteCharacter, getCharacter, getBundle, getActiveSession, ensureSession, createSession, switchSession, renameSession, deleteSession, updateActiveSession, resetActiveSession]);
+    flushChats,
+  }), [characters, chats, profile, settings, upsertCharacter, deleteCharacter, getCharacter, getBundle, getActiveSession, ensureSession, createSession, switchSession, renameSession, deleteSession, updateActiveSession, resetActiveSession, flushChats]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
