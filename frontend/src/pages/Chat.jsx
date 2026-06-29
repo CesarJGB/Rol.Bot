@@ -28,7 +28,7 @@ export default function Chat() {
   const {
     getCharacter, getBundle, getActiveSession,
     ensureSession, createSession, switchSession, renameSession, deleteSession,
-    updateActiveSession, resetActiveSession,
+    updateActiveSession, updateSession, resetActiveSession,
     flushChats,
     profile, settings,
   } = useApp();
@@ -147,7 +147,7 @@ export default function Chat() {
     try {
       const results = (await Promise.all(tasks)).filter(Boolean);
 
-      updateActiveSession(characterId, (s) => {
+      updateSession(characterId, sessionId, (s) => {
         let next = { ...s };
         for (const r of results) {
           if (r.kind === "summary" && r.value) next.summary = r.value;
@@ -172,7 +172,7 @@ export default function Chat() {
     } finally {
       bgUpdateInFlight.current = null;
     }
-  }, [character, settings, characterId, session?.id, updateActiveSession]);
+  }, [character, settings, characterId, session?.id, updateSession]);
 
   // ---- Actions ----
 

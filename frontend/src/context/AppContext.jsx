@@ -209,6 +209,22 @@ export const AppProvider = ({ children }) => {
     });
   }, []);
 
+  const updateSession = useCallback((characterId, sessionId, updater) => {
+    setChats(prev => {
+      const bundle = prev[characterId];
+      if (!bundle?.sessions?.[sessionId]) return prev;
+      const current = bundle.sessions[sessionId];
+      const next = typeof updater === "function" ? updater(current) : updater;
+      return {
+        ...prev,
+        [characterId]: {
+          ...bundle,
+          sessions: { ...bundle.sessions, [sessionId]: { ...next, updatedAt: Date.now() } },
+        },
+      };
+    });
+  }, []);
+
   const resetActiveSession = useCallback((characterId) => {
     const character = characters.find(c => c.id === characterId);
     setChats(prev => {
@@ -238,9 +254,9 @@ export const AppProvider = ({ children }) => {
     upsertCharacter, deleteCharacter, getCharacter,
     getBundle, getActiveSession,
     ensureSession, createSession, switchSession, renameSession, deleteSession,
-    updateActiveSession, resetActiveSession,
+    updateActiveSession, updateSession, resetActiveSession,
     flushChats,
-  }), [characters, chats, profile, settings, upsertCharacter, deleteCharacter, getCharacter, getBundle, getActiveSession, ensureSession, createSession, switchSession, renameSession, deleteSession, updateActiveSession, resetActiveSession, flushChats]);
+  }), [characters, chats, profile, settings, upsertCharacter, deleteCharacter, getCharacter, getBundle, getActiveSession, ensureSession, createSession, switchSession, renameSession, deleteSession, updateActiveSession, updateSession, resetActiveSession, flushChats]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
