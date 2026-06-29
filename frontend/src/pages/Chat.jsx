@@ -46,6 +46,7 @@ export default function Chat() {
 
   const scrollerRef = useRef(null);
   const abortRef = useRef(null);
+  const bgUpdateInFlight = useRef(null);
 
   // Ensure character has an active session.
   useEffect(() => {
@@ -101,6 +102,10 @@ export default function Chat() {
 
   // ---- Background updates (memory / summary / emotion) ----
   const runBackgroundUpdates = useCallback(async (updatedMessages, currentSummary, currentMemories, currentEmotion) => {
+    const sessionId = session?.id;
+    if (bgUpdateInFlight.current === sessionId) return;
+    bgUpdateInFlight.current = sessionId;
+
     const tasks = [];
     if (updatedMessages.length >= (settings.summarizeEvery || 8)) {
       const cutoff = Math.max(0, updatedMessages.length - settings.shortHistory);
@@ -131,32 +136,37 @@ export default function Chat() {
       );
     }
 
-    if (tasks.length === 0) return;
-    const results = (await Promise.all(tasks)).filter(Boolean);
+    if (tasks.length === 0) { bgUpdateInFlight.current = null; return; }
 
-    updateActiveSession(characterId, (s) => {
-      let next = { ...s };
-      for (const r of results) {
-        if (r.kind === "summary" && r.value) next.summary = r.value;
-        if (r.kind === "memories" && Array.isArray(r.value) && r.value.length > 0) {
-          const existingTexts = new Set((s.memories || []).map(m => (typeof m === "string" ? m : m.text).toLowerCase().trim()));
-          const merged = normalizeMemories(s.memories);
-          for (const m of r.value) {
-            const key = m.toLowerCase().trim();
-            if (!existingTexts.has(key)) {
-              existingTexts.add(key);
-              merged.push({ id: `mem_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`, text: m, pinned: false, createdAt: Date.now() });
+    try {
+      const results = (await Promise.all(tasks)).filter(Boolean);
+
+      updateActiveSession(characterId, (s) => {
+        let next = { ...s };
+        for (const r of results) {
+          if (r.kind === "summary" && r.value) next.summary = r.value;
+          if (r.kind === "memories" && Array.isArray(r.value) && r.value.length > 0) {
+            const existingTexts = new Set((s.memories || []).map(m => (typeof m === "string" ? m : m.text).toLowerCase().trim()));
+            const merged = normalizeMemories(s.memories);
+            for (const m of r.value) {
+              const key = m.toLowerCase().trim();
+              if (!existingTexts.has(key)) {
+                existingTexts.add(key);
+                merged.push({ id: `mem_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`, text: m, pinned: false, createdAt: Date.now() });
+              }
             }
+            const pinned = merged.filter(m => m.pinned);
+            const unpinned = merged.filter(m => !m.pinned).slice(-30);
+            next.memories = [...pinned, ...unpinned];
           }
-          const pinned = merged.filter(m => m.pinned);
-          const unpinned = merged.filter(m => !m.pinned).slice(-30);
-          next.memories = [...pinned, ...unpinned];
+          if (r.kind === "emotion" && r.value) next.emotion = r.value;
         }
-        if (r.kind === "emotion" && r.value) next.emotion = r.value;
-      }
-      return next;
-    });
-  }, [character, settings, characterId, updateActiveSession]);
+        return next;
+      });
+    } finally {
+      bgUpdateInFlight.current = null;
+    }
+  }, [character, settings, characterId, session?.id, updateActiveSession]);
 
   // ---- Actions ----
 

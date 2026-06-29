@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   ensureSeed,
   loadChats, saveChats,
@@ -56,8 +56,14 @@ export const AppProvider = ({ children }) => {
   const [profile, setProfile] = useState(() => loadProfile());
   const [settings, setSettings] = useState(() => loadSettings());
 
+  const chatsSaveTimer = useRef(null);
+
   useEffect(() => { trySave(saveCharacters, characters); }, [characters]);
-  useEffect(() => { trySave(saveChats, chats); }, [chats]);
+  useEffect(() => {
+    if (chatsSaveTimer.current) clearTimeout(chatsSaveTimer.current);
+    chatsSaveTimer.current = setTimeout(() => { trySave(saveChats, chats); }, 800);
+    return () => { if (chatsSaveTimer.current) clearTimeout(chatsSaveTimer.current); };
+  }, [chats]);
   useEffect(() => { trySave(saveProfile, profile); }, [profile]);
   useEffect(() => { trySave(saveSettings, settings); }, [settings]);
 
