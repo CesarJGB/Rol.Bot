@@ -13,6 +13,15 @@ export const normalizeMemories = (mems) => (mems || []).map((m, i) => {
   return m;
 });
 
+/**
+ * Helper de alto rendimiento para purgar bloques de razonamiento internos (<think>...</think>)
+ * de los historiales pasados para evitar la inflación exponencial de tokens.
+ */
+const cleanThinkingTokens = (text) => {
+  if (!text) return "";
+  return text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+};
+
 export function useChatActions({ character, session, characterId, profile, settings, updateActiveSession, updateSession, resetActiveSession }) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -24,7 +33,15 @@ export function useChatActions({ character, session, characterId, profile, setti
 
   const currentParams = useMemo(() => stylingToParams(settings), [settings]);
 
+  // Construye el payload optimizado limpiando la grasa de tokens históricos
   const buildPayload = useCallback((history) => {
+    // OPTIMIZACIÓN CLAVE: Mapeamos el historial para remover los tokens <think> viejos del asistente.
+    // Esto salva miles de tokens de entrada por mensaje en chats largos.
+    const optimizedHistory = history.map(m => ({
+      role: m.role,
+      content: m.role === "assistant" ? cleanThinkingTokens(m.content) : m.content
+    }));
+
     const args = {
       character, 
       scene: session?.scene, 
@@ -33,33 +50,43 @@ export function useChatActions({ character, session, characterId, profile, setti
       summary: session?.summary, 
       memories: normalizeMemories(session?.memories),
       emotion: session?.emotion || DEFAULT_EMOTION, 
-      history
+      history: optimizedHistory
     };
 
     const stablePrompt = buildStablePrompt(args);
     const dynamicPrompt = buildDynamicPrompt(args);
 
+    // Se autogestiona la ventana deslizable según el shortHistory configurado
+    const maxHistoryWindow = settings.shortHistory || 12;
+
     return {
       messages: buildMessages({ 
         stablePrompt, 
         dynamicPrompt, 
-        history, 
-        shortHistory: settings.shortHistory 
+        history: optimizedHistory, 
+        shortHistory: maxHistoryWindow 
       }),
       ...currentParams,
     };
   }, [character, session?.scene, session?.summary, session?.memories, session?.emotion, profile, settings, currentParams]);
 
+  // ---- Tareas en segundo plano ultra eficientes ----
   const runBackgroundUpdates = useCallback(async (updatedMessages, currentSummary, currentMemories, currentEmotion) => {
     const sessionId = session?.id;
     if (bgUpdateInFlight.current === sessionId) return;
     bgUpdateInFlight.current = sessionId;
 
+    // Limpiamos los mensajes de actualización para que las utilidades no gasten tokens leyendo razonamientos
+    const cleanMessages = updatedMessages.map(m => ({
+      role: m.role,
+      content: cleanThinkingTokens(m.content)
+    }));
+
     const tasks = [];
-    if (updatedMessages.length >= (settings.summarizeEvery || 8)) {
-      const cutoff = Math.max(0, updatedMessages.length - settings.shortHistory);
+    if (cleanMessages.length >= (settings.summarizeEvery || 8)) {
+      const cutoff = Math.max(0, cleanMessages.length - settings.shortHistory);
       if (cutoff >= 2) {
-        const chunk = updatedMessages.slice(0, cutoff).map(m => ({ role: m.role, content: m.content }));
+        const chunk = cleanMessages.slice(0, cutoff);
         tasks.push(
           summarizeChat({ messages: chunk, character_name: character.name, previous_summary: currentSummary || "" })
             .then(s => ({ kind: "summary", value: s }))
@@ -67,17 +94,17 @@ export function useChatActions({ character, session, characterId, profile, setti
         );
       }
     }
-    if (updatedMessages.length >= (settings.extractMemoryEvery || 4)) {
-      const lastN = updatedMessages.slice(-(settings.extractMemoryEvery || 4)).map(m => ({ role: m.role, content: m.content }));
+    if (cleanMessages.length >= (settings.extractMemoryEvery || 4)) {
+      const lastN = cleanMessages.slice(-(settings.extractMemoryEvery || 4));
       const existingTexts = (currentMemories || []).map(m => (typeof m === "string" ? m : m.text));
       tasks.push(
         extractMemories({ messages: lastN, character_name: character.name, existing_memories: existingTexts })
           .then(found => ({ kind: "memories", value: found || [] }))
           .catch(() => null)
-        );
+      );
     }
-    if (updatedMessages.length >= 3 && updatedMessages.length % (settings.emotionEvery || 6) === 0) {
-      const tail = updatedMessages.slice(-6).map(m => ({ role: m.role, content: m.content }));
+    if (cleanMessages.length >= 3 && cleanMessages.length % (settings.emotionEvery || 6) === 0) {
+      const tail = cleanMessages.slice(-6);
       tasks.push(
         updateEmotion({ messages: tail, character_name: character.name, current_state: currentEmotion || DEFAULT_EMOTION })
           .then(state => ({ kind: "emotion", value: state }))
@@ -146,7 +173,7 @@ export function useChatActions({ character, session, characterId, profile, setti
           finalContent += delta;
           buffer += delta;
           const now = Date.now();
-          if (now - lastFlush > 50 || buffer.length > 25) {
+          if (now - lastFlush > 40 || buffer.length > 30) {
             const snapshot = finalContent;
             updateActiveSession(characterId, (s) => {
               const msgs = [...s.messages];
@@ -175,11 +202,12 @@ export function useChatActions({ character, session, characterId, profile, setti
             const basePayload = buildPayload(messagesWithUser);
             const contPayload = {
               ...basePayload,
-              max_tokens: 300,
+              max_tokens: 250,
               temperature: Math.max(0.4, (basePayload.temperature || 0.85) - 0.2),
             };
             
-            contPayload.messages.push({ role: "assistant", content: trimmedContent });
+            // Inyectamos la respuesta limpia sin acumular sub-pensamientos
+            contPayload.messages.push({ role: "assistant", content: cleanThinkingTokens(trimmedContent) });
             contPayload.messages.push({ 
               role: "user", 
               content: "[Continue exactly from the last character. No preamble. Plain text continuation only.]" 
@@ -198,7 +226,7 @@ export function useChatActions({ character, session, characterId, profile, setti
                 return { ...s, messages: msgs };
               });
             }
-          } catch { /* keep original */ }
+          } catch { /* ignorar fallo de extensión */ }
         }
       } else {
         finalContent = await chatComplete(payload);
@@ -221,7 +249,7 @@ export function useChatActions({ character, session, characterId, profile, setti
     } catch (err) {
       if (err.name !== "AbortError") {
         console.error(err);
-        toast.error("No se pudo contactar con el modelo. Revisa tu clave de DeepSeek.");
+        toast.error("No se pudo contactar con el modelo. Revisa tu conexión.");
         if (!finalContent) {
           updateActiveSession(characterId, (s) => ({ ...s, messages: s.messages.filter(m => m.id !== aiMsg.id) }));
         }
@@ -244,7 +272,7 @@ export function useChatActions({ character, session, characterId, profile, setti
       const payload = buildPayload(messages);
       const content = await chatContinue(payload);
       if (!content || !content.trim()) {
-        toast.error("El modelo devolvió una respuesta vacía. Inténtalo de nuevo.");
+        toast.error("El modelo devolvió una respuesta vacía.");
         return;
       }
       const aiMsg = newMessage("assistant", content);
@@ -314,7 +342,7 @@ export function useChatActions({ character, session, characterId, profile, setti
       const content = await chatRegenerate({
         ...payload,
         attempt,
-        avoid_phrases: existingVariants,
+        avoid_phrases: existingVariants.map(cleanThinkingTokens), // Evita fugas aquí también
       });
       const newVariants = [...existingVariants, content].slice(-4);
       const updated = { ...target, content, variants: newVariants, variantIndex: newVariants.length - 1 };
