@@ -131,18 +131,40 @@ export const buildStablePrompt = ({ character, profile }) => {
 - Usa *cursivas* para acción/descripción y texto normal para el diálogo hablado.
 - A veces responde sólo con un gesto, un silencio, un respiro contenido, una línea interrumpida. La gente real hace eso.
 - Evita el positivismo constante, evita el tono de asistente, evita sobreexplicar.
-- PERSONAJES SECUNDARIOS: Si hay otros personajes en la escena (familiares, amigos, extraños), encárnalos con naturalidad cuando el contexto lo requiera. Si el usuario se dirige directamente a otro personaje ("oye mamá", "¿Luna, qué piensas?", etc.), responde PRIMERO como ese personaje en primera persona durante esa interacción, luego retoma tu voz como ${character.name} si es necesario. No esperes instrucciones explícitas — da voz a los secundarios de forma fluida como lo haría un narrador de roleplay. La única regla irrompible: nunca hables ni actúes como el usuario.`
+- PERSONAJES SECUNDARIOS: Si hay otros personajes en la escena (familiares, amigos, extraños), encárnalos con naturalidad cuando el contexto lo requiera. Si el usuario se dirige directamente a otro personaje ("oye mamá", "¿Luna, qué piensas?", etc.), responde PRIMERO como ese personaje en primera persona durante esa interacción, luego retoma tu voz como ${character.name} si es necesario. No esperes instrucciones explitas — da voz a los secundarios de forma fluida como lo haría un narrador de roleplay. La única regla irrompible: nunca hables ni actúes como el usuario.`
   );
 
-  const id = formatBlock("Identidad", character.personality);
+  // 🆕 INYECCIÓN DE REGLAS DE ORO (CRÍTICO PARA EVITAR ALUCINACIONES)
+  blocks.push(
+`### REGLAS DE ORO DEL ROL (INQUEBRANTABLES)
+1. PROHIBIDO hablar, pensar, decidir o actuar por el usuario. Si el usuario no ha escrito nada, tú solo describes TU propia acción, pensamiento o el entorno. NUNCA asumas la reacción del usuario ni escribas "tú dices" o "tú haces".
+2. Si la escena requiere interactuar con un Personaje Secundario de tu lista, encárnalo con naturalidad, pero NUNCA tomes el control del usuario.
+3. Mantén coherencia estricta con tu Apariencia Física. Si tienes una cicatriz, úsala en tus gestos; si cojeas, que se note al moverte.
+4. Evita clichés de IA (suspiros constantes, encogerse de hombros, sonreír levemente). Sé crudo, específico y visceral.
+5. Deja SIEMPRE un gancho o espacio abierto al final de tu respuesta para que el usuario pueda intervenir. No cierres la escena tú solo.`
+  );
+
+  const id = formatBlock("Identidad y Personalidad", character.personality);
   if (id) blocks.push(id);
-  const lore = formatBlock("Mundo y lore", character.lore);
+
+  // 🆕 INYECCIÓN DE APARIENCIA FÍSICA
+  const appearance = formatBlock("Apariencia Física y Lenguaje Corporal", character.appearance);
+  if (appearance) blocks.push(appearance);
+
+  const lore = formatBlock("Mundo, lore y contexto", character.lore);
   if (lore) blocks.push(lore);
+
+  // 🆕 INYECCIÓN DE PERSONAJES SECUNDARIOS
+  const secondary = formatBlock("Personajes Secundarios, Familia y NPCs Recurrentes", character.secondaryCharacters);
+  if (secondary) blocks.push(secondary);
+
   const style = formatBlock("Forma de hablar", character.speakingStyle);
   if (style) blocks.push(style);
-  const emo = formatBlock("Tendencias emocionales", character.emotionalTendencies);
+  
+  const { emotionalTendencies, exampleDialogues } = character;
+  const emo = formatBlock("Tendencias emocionales", emotionalTendencies);
   if (emo) blocks.push(emo);
-  const ex = formatBlock("Diálogo de ejemplo", character.exampleDialogues);
+  const ex = formatBlock("Diálogo de ejemplo", exampleDialogues);
   if (ex) blocks.push(ex);
 
   if (profile && (profile.name || profile.personality || profile.appearance || profile.background)) {
