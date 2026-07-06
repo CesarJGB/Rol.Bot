@@ -270,6 +270,17 @@ export function useChatActions({ character, session, characterId, profile, setti
     setStreamingPlaceholder(true);
     try {
       const payload = buildPayload(messages);
+      
+      // 🛡️ BLINDAJE ANTI-ALUCINACIÓN PARA CONTINUAR
+      payload.messages.push({
+        role: "system",
+        content: `[INSTRUCCIÓN DE CONTINUIDAD NARRATIVA]
+El usuario NO ha emitido ninguna respuesta, gesto ni acción. PROHIBIDO inventar que el usuario habló, asintió o se movió.
+Continúa la escena EXCLUSIVAMENTE desde la perspectiva de ${character.name}. 
+Profundiza en su psicología, describe una acción sutil, un recuerdo que le asalta, o cómo interactúa con el entorno o un personaje secundario de tu lista.
+Mantén la atmósfera. NO cierres la escena. Deja el turno abierto para el usuario.`
+      });
+
       const content = await chatContinue(payload);
       if (!content || !content.trim()) {
         toast.error("El modelo devolvió una respuesta vacía.");
@@ -339,6 +350,16 @@ export function useChatActions({ character, session, characterId, profile, setti
     setStreamingPlaceholder(true);
     try {
       const payload = buildPayload(history);
+      
+      // 🎭 INSTRUCCIÓN DE VARIACIÓN NARRATIVA
+      payload.messages.push({
+        role: "system",
+        content: `[INSTRUCCIÓN DE REGENERACIÓN]
+Esta es una variante alternativa. No repitas las mismas acciones, gestos o frases de los intentos anteriores.
+Toma una decisión narrativa distinta para ${character.name} (quizás es más frío, más vulnerable, o reacciona al entorno en lugar de al usuario).
+RECUERDA: NUNCA hables ni actúes por el usuario.`
+      });
+
       const content = await chatRegenerate({
         ...payload,
         attempt,
