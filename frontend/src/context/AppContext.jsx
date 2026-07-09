@@ -11,6 +11,90 @@ import {
 import { DEFAULT_EMOTION } from "../lib/constants";
 import { toast } from "sonner";
 
+// ============================================================================
+// 🚀 MIGRACIÓN DE DATOS ADAPTADA A TU STRUCT DE BUNDLES Y SESSIONS
+// ============================================================================
+const APP_VERSION = "2.0.0"; // Incrementa esto cuando cambies propiedades lógicas
+
+const migrateLocalStorage = () => {
+  if (typeof window === "undefined") return;
+
+  try {
+    const currentVersion = localStorage.getItem("app_version");
+
+    if (currentVersion !== APP_VERSION) {
+      console.log(`[Migrador] Versión antigua detectada (${currentVersion || "Ninguna"}). Reestructurando...`);
+
+      // 1. Migración de Personajes (Inyección de nuevas llaves visuales/prompts)
+      const rawCharacters = localStorage.getItem("characters");
+      if (rawCharacters) {
+        const characters = JSON.parse(rawCharacters);
+        if (Array.isArray(characters)) {
+          const migratedCharacters = characters.map(char => ({
+            ...char,
+            secondaryCharacters: char.secondaryCharacters || "",
+            appearance: char.appearance || "",
+            speakingStyle: char.speakingStyle || "",
+          }));
+          localStorage.setItem("characters", JSON.stringify(migratedCharacters));
+        }
+      }
+
+      // 2. Migración del Diccionario de Chats (Estructura: chats -> characterId -> sessions -> sessionId)
+      const rawChats = localStorage.getItem("chats"); 
+      if (rawChats) {
+        const chats = JSON.parse(rawChats);
+        
+        // Iteramos sobre cada personaje dentro del mapa global de chats
+        for (const characterId in chats) {
+          if (!Object.prototype.hasOwnProperty.call(chats, characterId)) continue;
+          
+          const bundle = chats[characterId];
+          if (bundle && bundle.sessions) {
+            // Iteramos sobre cada sesión de conversación de ese personaje específico
+            for (const sessionId in bundle.sessions) {
+              if (!Object.prototype.hasOwnProperty.call(bundle.sessions, sessionId)) continue;
+              
+              const session = bundle.sessions[sessionId];
+              if (session) {
+                // Aseguramos formato correcto de recuerdos
+                if (!Array.isArray(session.memories)) {
+                  session.memories = [];
+                }
+                
+                // Normalizamos el historial de mensajes de la sesión para soportar Swipes / Variantes
+                if (Array.isArray(session.messages)) {
+                  session.messages = session.messages.map(msg => {
+                    if (msg.role === "assistant") {
+                      return {
+                        ...msg,
+                        variants: Array.isArray(msg.variants) ? msg.variants : [msg.content],
+                        variantIndex: typeof msg.variantIndex === "number" ? msg.variantIndex : 0,
+                      };
+                    }
+                    return msg;
+                  });
+                }
+              }
+            }
+          }
+        }
+        localStorage.setItem("chats", JSON.stringify(chats));
+      }
+
+      // Marcar versión como completada
+      localStorage.setItem("app_version", APP_VERSION);
+      console.log("[Migrador] ¡Estructura de base de datos local actualizada con éxito!");
+    }
+  } catch (error) {
+    console.error("[Migrador] Fallo en la reestructuración automática de datos locales:", error);
+  }
+};
+
+// Se ejecuta de forma síncrona en el hilo principal antes de inicializar los useState de abajo
+migrateLocalStorage();
+// ============================================================================
+
 const AppContext = createContext(null);
 
 const newId = () => `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -33,8 +117,6 @@ export const blankCharacter = (overrides = {}) => ({
 
 const emptyChatBundle = () => ({ sessions: {}, activeSessionId: null });
 
-// Wrapper que captura el error de storage lleno y avisa al usuario
-// en lugar de dejar la app en pantalla negra.
 const trySave = (saveFn, args) => {
   try {
     saveFn(args);
@@ -51,6 +133,7 @@ const trySave = (saveFn, args) => {
 };
 
 export const AppProvider = ({ children }) => {
+  // Nota: Al ejecutarse el migrador arriba, estas funciones de lectura ya leerán el JSON reparado.
   const [characters, setCharacters] = useState(() => ensureSeed() || []);
   const [chats, setChats] = useState(() => loadChats(ensureSeed() || []));
   const [profile, setProfile] = useState(() => loadProfile());
@@ -175,7 +258,7 @@ export const AppProvider = ({ children }) => {
     setChats(prev => {
       const bundle = prev[characterId];
       if (!bundle?.sessions?.[sessionId]) return prev;
-      const { [sessionId]: _, ...rest } = bundle.sessions;
+      const { [sessionId]: _, ...rest = {} } = bundle.sessions;
       const remainingIds = Object.keys(rest);
       let activeSessionId = bundle.activeSessionId;
       if (sessionId === activeSessionId) {
