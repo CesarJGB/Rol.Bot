@@ -258,7 +258,7 @@ export const AppProvider = ({ children }) => {
     setChats(prev => {
       const bundle = prev[characterId];
       if (!bundle?.sessions?.[sessionId]) return prev;
-      const { [sessionId]: _, ...rest = {} } = bundle.sessions;
+      const { [sessionId]: _, ...rest } = bundle.sessions;
       const remainingIds = Object.keys(rest);
       let activeSessionId = bundle.activeSessionId;
       if (sessionId === activeSessionId) {
