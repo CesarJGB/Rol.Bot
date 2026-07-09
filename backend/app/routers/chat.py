@@ -12,13 +12,16 @@ async def _verify_and_auto_continue(content: str, finish_reason: str, base_paylo
     """Helper DRY para manejar textos cortados a mitad de frase."""
     if finish_reason == "length" or looks_cut_off(content):
         cont_payload = dict(base_payload)
-        cont_payload["messages"] = (
-            base_payload["messages"]
-            + [{"role": "assistant", "content": content}]
-            + [{"role": "user", "content": "[Continue exactly where you left off mid-sentence. Do not repeat. Finish the thought naturally and stop within a beat or two. Plain continuation only — no preamble.]"}]
-        )
-        cont_payload["max_tokens"] = min(600, base_payload.get("max_tokens", 800))
-        cont_payload["temperature"] = max(0.4, original_temp - 0.2)
+        
+        # Copiamos el array para no mutar el original
+        extended_messages = list(base_payload["messages"])
+        extended_messages.append({"role": "assistant", "content": content})
+        extended_messages.append({"role": "user", "content": "[Continue exactly where you left off mid-sentence. Do not repeat. Finish the thought naturally and stop within a beat or two. Plain continuation only — no preamble.]"})
+        
+        cont_payload["messages"] = extended_messages
+        cont_payload["max_tokens"] = min(400, base_payload.get("max_tokens", 800))
+        cont_payload["temperature"] = 0.50 # Temperatura baja fija para continuaciones ultra rápidas
+        
         try:
             cdata = await deepseek_agent.post("/chat/completions", cont_payload)
             extra = cdata["choices"][0]["message"]["content"]
@@ -51,7 +54,7 @@ async def chat(req: ChatRequest):
     except (KeyError, IndexError):
         raise HTTPException(status_code=502, detail="Malformed DeepSeek response")
 
-    content = await _verify_and_auto_continue(content, finish_reason, payload, req.temperature or 0.85)
+    content = await _verify_and_auto_continue(content, finish_reason, payload, req.temperature or 0.6)
     return {"content": content, "usage": data.get("usage", {}), "finish_reason": finish_reason}
 
 @router.post("/regenerate")
@@ -67,23 +70,28 @@ async def chat_regenerate(req: ChatRequest):
 
     msgs = [m.model_dump() for m in req.messages]
     instruction = (
-        f"[REGENERATION — attempt #{attempt}]\n{directive}\n"
+        f"\n\n[REGENERATION — attempt #{attempt}]\n{directive}\n"
         f"This is a fresh take. Do NOT paraphrase any prior version. Pick a different emotional path, a different first sentence, "
         f"a different gesture, a different focal point.{avoid_block}"
     )
     
-    if msgs and msgs[0]["role"] == "system":
-        msgs[0]["content"] = msgs[0]["content"] + "\n\n" + instruction
-    else:
-        msgs.insert(0, {"role": "system", "content": instruction})
+    # 🚀 PROTECCIÓN DE CACHÉ: En lugar de meter la instrucción en msgs[0], 
+    # la pegamos al FINAL del último mensaje de usuario disponible.
+    if msgs:
+        last_user_msg = next((m for m in reversed(msgs) if m["role"] == "user"), None)
+        if last_user_msg:
+            last_user_msg["content"] = last_user_msg["content"] + instruction
+        else:
+            msgs.append({"role": "system", "content": instruction})
 
+    # Calibración de parámetros segura para DeepSeek Reasoner
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": msgs,
-        "temperature": min(1.25, (req.temperature or 0.85) + (0.15 + (attempt - 1) * 0.10)),
+        "temperature": min(0.70, (req.temperature or 0.6) + (attempt * 0.02)), # Capado estrictamente a 0.70
         "max_tokens": req.max_tokens,
-        "presence_penalty": min(1.2, (req.presence_penalty or 0.7) + (0.05 + (attempt - 1) * 0.08)),
-        "frequency_penalty": min(1.2, (req.frequency_penalty or 0.45) + (0.03 + (attempt - 1) * 0.07)),
+        "presence_penalty": 0.1, 
+        "frequency_penalty": 0.1,
         "top_p": min(1.0, (req.top_p or 0.95)),
         "stream": False,
     }
@@ -102,25 +110,30 @@ async def chat_regenerate(req: ChatRequest):
 async def chat_continue(req: ContinueRequest):
     msgs = [m.model_dump() for m in req.messages]
     nudge = (
-        "[CONTINUE THE SCENE — ONE BEAT FORWARD]\n"
+        "\n\n[CONTINUE THE SCENE — ONE BEAT FORWARD]\n"
         "Continue DIRECTLY from where the last message ended. Do NOT rewind, do NOT re-introduce context, "
         "do NOT summarize what just happened. Pick up mid-scene as if no time has passed.\n"
         "NEVER speak, think, or act as the user. NEVER invent dialogue or actions for the user.\n"
         "One small thing happens: a glance, a breath, a movement, a sound, a shift in the air. "
         "Under 80 words. Stay fully in character. No preamble. Just continue."
     )
-    if msgs and msgs[0]["role"] == "system":
-        msgs[0]["content"] = msgs[0]["content"] + "\n\n" + nudge
-    else:
-        msgs.insert(0, {"role": "system", "content": nudge})
+    
+    # 🚀 PROTECCIÓN DE CACHÉ: Inyectamos la instrucción al final del historial limpio
+    if msgs:
+        last_user_msg = next((m for m in reversed(msgs) if m["role"] == "user"), None)
+        if last_user_msg:
+            last_user_msg["content"] = last_user_msg["content"] + nudge
+        else:
+            # Si es una continuación consecutiva pura (solo hay assistant al final), lo añadimos como nota de sistema final
+            msgs.append({"role": "system", "content": nudge})
 
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": msgs,
-        "temperature": min(1.5, (req.temperature or 0.85) + 0.1),
+        "temperature": min(0.70, (req.temperature or 0.6) + 0.05), # Evitamos el 1.5 que destruía el pensamiento
         "max_tokens": min(req.max_tokens or 800, 1000),
-        "presence_penalty": min(2.0, (req.presence_penalty or 0.7) + 0.15),
-        "frequency_penalty": min(2.0, (req.frequency_penalty or 0.45) + 0.1),
+        "presence_penalty": 0.1,
+        "frequency_penalty": 0.1,
         "top_p": req.top_p,
         "stream": False,
     }
@@ -156,7 +169,6 @@ async def chat_stream(req: ChatRequest):
         has_finished_thinking = False
         
         try:
-            # Aquí usamos el pool global persistente para el streaming también
             async with deepseek_agent.client.stream("POST", "/chat/completions", json=payload) as resp:
                 if resp.status_code >= 400:
                     yield f"data: {json.dumps({'error': f'upstream {resp.status_code}'})}\n\n"
