@@ -1,6 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from app.schemas import SummarizeRequest, MemoryRequest, EmotionRequest, CompressRequest, AutoFillRequest
-from app.config import DEEPSEEK_MODEL
+from app.config import DEEPSEEK_MODEL # Si puedes, usa un modelo sin razonamiento para estas utilidades (ej. DeepSeek-V3)
 from app.core.client import deepseek_agent
 import json
 
@@ -22,10 +22,9 @@ async def summarize(req: SummarizeRequest):
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": [{"role": "system", "content": sys}, {"role": "user", "content": user}],
-        "temperature": 0.45,
-        "max_tokens": 260,
+        "temperature": 0.3, # Temperatura baja para resúmenes más estables
+        "max_tokens": 300,
         "stream": False,
-        "thinking": {"type": "disabled"},
     }
     data = await deepseek_agent.post("/chat/completions", payload)
     return {"summary": data["choices"][0]["message"]["content"].strip()}
@@ -37,24 +36,29 @@ async def extract_memories(req: MemoryRequest):
     sys = (
         "You extract ONLY the most essential, durable facts from a roleplay exchange.\n"
         "Return a JSON array of short strings (each max 12 words). Be VERY selective — aim for 0-3 items max.\n"
-        "Output JSON only."
+        "Output JSON only. Do not wrap in markdown code blocks."
     )
     user = f"Character: {req.character_name}\n\nExisting memories:\n{existing or '(none)'}\n\nExchange:\n{history_text}"
     
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": [{"role": "system", "content": sys}, {"role": "user", "content": user}],
-        "temperature": 0.35,
-        "max_tokens": 160,
+        "temperature": 0.1, # Casi determinista para evitar memorias duplicadas o raras
+        "max_tokens": 200,
+        "response_format": {"type": "json_object"}, # 🚀 JSON MODE NATIVO
         "stream": False,
-        "thinking": {"type": "disabled"},
     }
     data = await deepseek_agent.post("/chat/completions", payload)
-    content = data["choices"][0]["message"]["content"].strip().strip("`").replace("json", "").strip()
+    content = data["choices"][0]["message"]["content"].strip()
+    
     try:
         memories = json.loads(content)
-        if not isinstance(memories, list): memories = []
-    except json.JSONDecodeError:
+        # Aseguramos que la respuesta venga dentro de una llave o sea una lista válida
+        if isinstance(memories, dict) and "memories" in memories:
+            memories = memories["memories"]
+        if not isinstance(memories, list): 
+            memories = []
+    except (json.JSONDecodeError, TypeError):
         memories = []
     return {"memories": memories}
 
@@ -64,22 +68,28 @@ async def update_emotion(req: EmotionRequest):
     current = req.current_state or {"trust": 50, "affection": 50, "tension": 30, "fear": 20, "hostility": 20}
     sys = (
         "You track a fictional character's emotional state toward the user across a roleplay.\n"
-        "Keys: trust, affection, tension, fear, hostility — each integer 0-100. Output JSON only."
+        "Return a JSON object with the updated integers (0-100) for the keys provided.\n"
+        "Keys: trust, affection, tension, fear, hostility. Output JSON only."
     )
     user = f"Character: {req.character_name}\n\nCurrent state: {json.dumps(current)}\n\nRecent exchange:\n{history_text}"
     
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": [{"role": "system", "content": sys}, {"role": "user", "content": user}],
-        "temperature": 0.3,
-        "max_tokens": 120,
+        "temperature": 0.2,
+        "max_tokens": 150,
+        "response_format": {"type": "json_object"}, # 🚀 JSON MODE NATIVO
         "stream": False,
-        "thinking": {"type": "disabled"},
     }
     data = await deepseek_agent.post("/chat/completions", payload)
-    content = data["choices"][0]["message"]["content"].strip().strip("`").replace("json", "").strip()
+    content = data["choices"][0]["message"]["content"].strip()
+    
     try:
         state = json.loads(content)
+        # Si el modelo anidó el JSON dentro de una llave primaria, intentamos extraerlo
+        if "state" in state and isinstance(state["state"], dict):
+            state = state["state"]
+            
         out = {k: max(0, min(100, int(state.get(k, current.get(k, 50))))) for k in current.keys()}
         return {"state": out}
     except Exception:
@@ -90,37 +100,54 @@ async def compress_character(req: CompressRequest):
     sys = (
         "Eres un experto en optimización de prompts para roleplay. Tu tarea es tomar la descripción "
         "de un personaje y comprimirla en un formato YAML estricto y denso (estilo W++).\n"
-        "Devuelve SOLO el código YAML puro, sin code fences (```) ni explicaciones."
+        "Devuelve SOLO el código YAML puro, sin explicaciones coloniales ni introducciones."
     )
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": [{"role": "system", "content": sys}, {"role": "user", "content": f"Comprime este perfil:\n\n{req.text}"}],
         "temperature": 0.2,
-        "max_tokens": 500,
+        "max_tokens": 600,
         "stream": False,
-        "thinking": {"type": "disabled"}
     }
     data = await deepseek_agent.post("/chat/completions", payload)
-    content = data["choices"][0]["message"]["content"].strip().strip("`").replace("yaml", "").strip()
-    return {"compressed": content}
+    content = data["choices"][0]["message"]["content"].strip()
+    
+    # Limpieza segura para YAML (Los LLMs aman poner cercas de código si no se las quitas)
+    if content.startswith("```"):
+        lines = content.splitlines()
+        if lines[0].startswith("```"): lines.pop(0)
+        if lines and lines[-1].startswith("```"): lines.pop()
+        content = "\n".join(lines).replace("yaml\n", "")
+        
+    return {"compressed": content.strip()}
 
-# Reubicado bajo el prefijo correcto de ruta semántica
 @router.post("/character/auto-fill")
 async def auto_fill_character(req: AutoFillRequest):
     sys = (
         "Eres un ingeniero experto en optimización de prompts para bots de roleplay. "
         "Analiza la descripción y repártela en un objeto JSON válido con estas llaves exactas:\n"
         "tagline, personality, lore, speakingStyle, emotionalTendencies, exampleDialogues, tags.\n"
-        "Output JSON only. No prose. No code fences."
+        "Output JSON only."
     )
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": [{"role": "system", "content": sys}, {"role": "user", "content": f"Descripción:\n{req.base_description}\n\nMensaje:\n{req.initial_message}"}],
         "temperature": 0.3,
         "max_tokens": 1500,
+        "response_format": {"type": "json_object"}, # 🚀 JSON MODE NATIVO
         "stream": False,
-        "thinking": {"type": "disabled"}
     }
     data = await deepseek_agent.post("/chat/completions", payload)
-    content = data["choices"][0]["message"]["content"].strip().strip("`").replace("json", "").strip()
-    return {"character_data": json.loads(content)}
+    content = data["choices"][0]["message"]["content"].strip()
+    
+    try:
+        character_data = json.loads(content)
+    except json.JSONDecodeError:
+        # Fallback de seguridad en caso de fallo de generación para que no crashee tu backend
+        character_data = {
+            "tagline": "", "personality": "", "lore": "", 
+            "speakingStyle": "", "emotionalTendencies": "", 
+            "exampleDialogues": "", "tags": []
+        }
+        
+    return {"character_data": character_data}
