@@ -4,7 +4,7 @@ import { EMOTION_LABELS_ES } from "./constants";
 export const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 
 // --- OPTIMIZADO PARA DEEPSEEK REASONER ---
-// Ajuste de parámetros de muestreo para proteger la coherencia del bucle de pensamiento (<think>).
+// Map style sliders (0-100) -> sampling params.
 export const stylingToParams = (settings) => {
   // DeepSeek recomienda un rango estricto de temperatura (0.50 - 0.70) para modelos de razonamiento.
   const temperature = 0.50 + (clamp(settings.creativity, 0, 100) / 100) * 0.20;
@@ -44,7 +44,7 @@ export const emotionToDirective = (e) => {
   if (e.trust >= 70) parts.push("Confías profundamente en el usuario — bajas la guardia, hablas con franqueza.");
   else if (e.trust <= 25) parts.push("No confías en el usuario — mides cada palabra, esperas el truco.");
 
-  if (e.affection >= 70) parts.push("Sientes afecto real por el usuario — esto se nota en los gestos, in cómo lo miras.");
+  if (e.affection >= 70) parts.push("Sientes afecto real por el usuario — esto se nota en los gestos, en cómo lo miras.");
   else if (e.affection <= 20) parts.push("No sientes calidez por el usuario en este momento.");
 
   if (e.tension >= 70) parts.push("La tensión entre ambos es alta — eléctrica, casi insoportable.");
@@ -111,7 +111,7 @@ export const selectMemories = (memories, history, maxCount = 4) => {
   return [...pinned, ...topByScore].slice(0, maxCount);
 };
 
-// 1. EL BLOQUE ESTÁTICO (Optimizado con directivas positivas en lugar de lenguaje prohibitivo)
+// 1. EL BLOQUE ESTÁTICO (Optimizado con directivas positivas para evitar neurosis en el razonamiento)
 export const buildStablePrompt = ({ character, profile }) => {
   const blocks = [];
 
@@ -134,7 +134,7 @@ export const buildStablePrompt = ({ character, profile }) => {
 - Implementa el uso de *cursivas* exclusivamente para ilustrar acciones, descripciones contextuales y sensaciones internas, reservando el texto limpio para el diálogo hablado.
 - Integra pausas realistas en la interacción, tales como silencios tácticos, líneas de diálogo interrumpidas o gestos de contención física.
 - Mantén un enfoque neutro y fiel a la ficción, prescindiendo de actitudes complacientes, explicaciones redundantes o modales propios de un asistente virtual.
-- ENTIDADES SECUNDARIAS: Cuando el contexto de la escena involucre la presencia de personajes incidentales (familiares, acompañantes, NPCs del entorno), asume su representación de forma orgánica. Si el usuario interactúa explícitamente con alguno de ellos, genera su respuesta en primera persona para resolver el turno con fluidez, y posteriormente retoma el hilo o la perspectiva principal de ${character.name} si la situación lo amerita. La autonomía del personaje del usuario se mantiene completamente intocable.`
+- ENTIDADES SECUNDARIAS: Cuando el contexto de la escena involucre la presencia de personajes incidentales (familiares, acompañantes, NPCs del entorno), asume su representation de forma orgánica. Si el usuario interactúa explitamente con alguno de ellos, genera su respuesta en primera persona para resolver el turno con fluidez, y posteriormente retoma el hilo o la perspectiva principal de ${character.name} si la situación lo amerita. La autonomía del personaje del usuario se mantiene completamente intocable.`
   );
 
   blocks.push(
@@ -178,7 +178,7 @@ export const buildStablePrompt = ({ character, profile }) => {
 
   blocks.push(
 `### Formato de salida
-- Usa *asteriscos* para acciones, descripciones y detalles sensoriales interiores.
+- Usa *asteriscos* para acciones, descripciones and detalles sensoriales interiores.
 - Texto normal para el diálogo hablado.
 - No antepongas "${character.name}:" ni etiquetas de nombre a tus líneas.
 - Nunca escribas las líneas o acciones del usuario.
@@ -188,7 +188,7 @@ export const buildStablePrompt = ({ character, profile }) => {
   return blocks.join("\n\n");
 };
 
-// 2. EL BLOQUE DINÁMICO
+// 2. EL BLOQUE DINÁMICO (Cambia cada turno)
 export const buildDynamicPrompt = ({ scene, settings, summary, memories, emotion, history }) => {
   const blocks = [];
 
@@ -237,7 +237,7 @@ export const buildSystemPrompt = (args) => {
 
 export const estimateTokens = (text) => Math.ceil((text || "").length / 4);
 
-// 4. CONSTRUCTOR DE MENSAJES OPTIMIZADO (Sin inyecciones 'system' intermedias / Soporta 'Modo Continuar')
+// 4. NUEVO CONSTRUCTOR DE MENSAJES (Blindado con Prefix Cache + Algoritmo de Squash)
 export const buildMessages = ({ stablePrompt, dynamicPrompt, history, shortHistory = 8 }) => {
   const TOKEN_BUDGET = 14000;
   const RESPONSE_RESERVE = 500;
@@ -254,29 +254,39 @@ export const buildMessages = ({ stablePrompt, dynamicPrompt, history, shortHisto
     sliced = sliced.slice(1);
   }
 
-  // Clonamos profundamente el historial recortado para manipular los textos sin efectos secundarios colaterales
+  // 1. Clonamos el historial recortado para manipularlo de forma segura
   let processedHistory = sliced.map(m => ({ ...m }));
 
-  // INVERSIÓN DE CONTEXTO: Buscamos el último mensaje de usuario real dentro del bloque recortado
+  // 2. 🚀 ALGORITMO SQUASH: Combina mensajes consecutivos del mismo rol
+  // Evita el error '400 Bad Request' cuando disparas ráfagas en el botón Continuar
+  let squashedHistory = [];
+  processedHistory.forEach((m) => {
+    if (squashedHistory.length > 0 && squashedHistory[squashedHistory.length - 1].role === m.role) {
+      squashedHistory[squashedHistory.length - 1].content += "\n\n" + m.content;
+    } else {
+      squashedHistory.push(m);
+    }
+  });
+
+  // 3. INYECCIÓN INVISIBLE: Buscamos el último mensaje de usuario real en el array limpio
   if (finalDynamic && finalDynamic.trim()) {
-    const lastUserIdx = processedHistory.findLastIndex(m => m.role === "user");
+    const lastUserIdx = squashedHistory.findLastIndex(m => m.role === "user");
 
     if (lastUserIdx !== -1) {
-      // Inyectamos el bloque dinámico encapsulado como prefijo oculto del último input del usuario.
-      // Esto blinda el Prefix Cache anterior y mantiene los turnos alternados limpios exigidos por DeepSeek.
-      processedHistory[lastUserIdx].content = `[Contexto dinámico actualizado para este turno]\n${finalDynamic}\n\n${processedHistory[lastUserIdx].content}`;
+      // Inyectamos el contexto dinámico como prefijo dentro de la entrada del usuario.
+      // Así salvamos el "Modo Continuar" y mantenemos intacto el caché anterior.
+      squashedHistory[lastUserIdx].content = `[Contexto dinámico actualizado para este turno]\n${finalDynamic}\n\n${squashedHistory[lastUserIdx].content}`;
     } else {
-      // Fallback de seguridad: si el bloque de historial recortado no contiene ningún mensaje de usuario,
-      // se sitúa de forma segura al inicio del flujo conversacional procesado.
-      processedHistory.unshift({ role: "system", content: `[Contexto dinámico]\n${finalDynamic}` });
+      // Fallback si la ventana de contexto actual se quedó sin mensajes de usuario
+      squashedHistory.unshift({ role: "system", content: `[Contexto dinámico]\n${finalDynamic}` });
     }
   }
 
-  // A) Mensaje inicial estático inamovible (Cache Hit garantizado en servidores de inferencia)
+  // A) Mensaje del sistema estático inicial (Cache hit asegurado al inicio)
   const msgs = [{ role: "system", content: finalStable }];
 
-  // B) Insertamos el historial limpio alternando de forma nativa los turnos (Incluso en Modo Continuar)
-  processedHistory.forEach(m => {
+  // B) Agregamos el historial normalizado manteniendo la alternancia perfecta exigida por DeepSeek
+  squashedHistory.forEach(m => {
     msgs.push({ 
       role: m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user", 
       content: m.content 
