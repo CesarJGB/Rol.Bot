@@ -35,8 +35,6 @@ export function useChatActions({ character, session, characterId, profile, setti
 
   // Construye el payload optimizado limpiando la grasa de tokens históricos
   const buildPayload = useCallback((history) => {
-    // OPTIMIZACIÓN CLAVE: Mapeamos el historial para remover los tokens <think> viejos del asistente.
-    // Esto salva miles de tokens de entrada por mensaje en chats largos.
     const optimizedHistory = history.map(m => ({
       role: m.role,
       content: m.role === "assistant" ? cleanThinkingTokens(m.content) : m.content
@@ -56,7 +54,6 @@ export function useChatActions({ character, session, characterId, profile, setti
     const stablePrompt = buildStablePrompt(args);
     const dynamicPrompt = buildDynamicPrompt(args);
 
-    // Se autogestiona la ventana deslizable según el shortHistory configurado
     const maxHistoryWindow = settings.shortHistory || 12;
 
     return {
@@ -76,7 +73,6 @@ export function useChatActions({ character, session, characterId, profile, setti
     if (bgUpdateInFlight.current === sessionId) return;
     bgUpdateInFlight.current = sessionId;
 
-    // Limpiamos los mensajes de actualización para que las utilidades no gasten tokens leyendo razonamientos
     const cleanMessages = updatedMessages.map(m => ({
       role: m.role,
       content: cleanThinkingTokens(m.content)
@@ -101,7 +97,7 @@ export function useChatActions({ character, session, characterId, profile, setti
         extractMemories({ messages: lastN, character_name: character.name, existing_memories: existingTexts })
           .then(found => ({ kind: "memories", value: found || [] }))
           .catch(() => null)
-      );
+        );
     }
     if (cleanMessages.length >= 3 && cleanMessages.length % (settings.emotionEvery || 6) === 0) {
       const tail = cleanMessages.slice(-6);
@@ -203,10 +199,9 @@ export function useChatActions({ character, session, characterId, profile, setti
             const contPayload = {
               ...basePayload,
               max_tokens: 250,
-              temperature: Math.max(0.4, (basePayload.temperature || 0.85) - 0.2),
+              temperature: 0.50, // Temperatura baja y fija para la extensión veloz
             };
             
-            // Inyectamos la respuesta limpia sin acumular sub-pensamientos
             contPayload.messages.push({ role: "assistant", content: cleanThinkingTokens(trimmedContent) });
             contPayload.messages.push({ 
               role: "user", 
@@ -271,15 +266,16 @@ export function useChatActions({ character, session, characterId, profile, setti
     try {
       const payload = buildPayload(messages);
       
-      // 🛡️ BLINDAJE ANTI-ALUCINACIÓN PARA CONTINUAR
-      payload.messages.push({
-        role: "system",
-        content: `[INSTRUCCIÓN DE CONTINUIDAD NARRATIVA]
-El usuario NO ha emitido ninguna respuesta, gesto ni acción. PROHIBIDO inventar que el usuario habló, asintió o se movió.
-Continúa la escena EXCLUSIVAMENTE desde la perspectiva de ${character.name}. 
-Profundiza en su psicología, describe una acción sutil, un recuerdo que le asalta, o cómo interactúa con el entorno o un personaje secundario de tu lista.
-Mantén la atmósfera. NO cierres la escena. Deja el turno abierto para el usuario.`
-      });
+      // 🚀 BLINDAJE CACHÉ: En lugar de hacer .push(system), inyectamos de forma segura
+      // al final del último mensaje de usuario existente en el array transformado.
+      const lastUserIdx = payload.messages.findLastIndex(m => m.role === "user");
+      const instruction = `\n\n[INSTRUCCIÓN DE CONTINUIDAD NARRATIVA]\nEl usuario NO ha emitido ninguna respuesta. Continúa la escena EXCLUSIVAMENTE desde la perspectiva de ${character.name}, profundizando en su psicología o entorno sin actuar por el usuario. Deja el turno abierto.`;
+      
+      if (lastUserIdx !== -1) {
+        payload.messages[lastUserIdx].content += instruction;
+      } else {
+        payload.messages.push({ role: "user", content: instruction });
+      }
 
       const content = await chatContinue(payload);
       if (!content || !content.trim()) {
@@ -351,19 +347,20 @@ Mantén la atmósfera. NO cierres la escena. Deja el turno abierto para el usuar
     try {
       const payload = buildPayload(history);
       
-      // 🎭 INSTRUCCIÓN DE VARIACIÓN NARRATIVA
-      payload.messages.push({
-        role: "system",
-        content: `[INSTRUCCIÓN DE REGENERACIÓN]
-Esta es una variante alternativa. No repitas las mismas acciones, gestos o frases de los intentos anteriores.
-Toma una decisión narrativa distinta para ${character.name} (quizás es más frío, más vulnerable, o reacciona al entorno en lugar de al usuario).
-RECUERDA: NUNCA hables ni actúes por el usuario.`
-      });
+      // 🚀 BLINDAJE CACHÉ: Inyección limpia en el último mensaje de usuario
+      const lastUserIdx = payload.messages.findLastIndex(m => m.role === "user");
+      const instruction = `\n\n[INSTRUCCIÓN DE REGENERACIÓN]\nEsta es una variante alternativa (Intento #${attempt}). Explora una ruta emocional o gestual distinta para ${character.name} sin repetir frases previas. NUNCA actúes por el usuario.`;
+      
+      if (lastUserIdx !== -1) {
+        payload.messages[lastUserIdx].content += instruction;
+      } else {
+        payload.messages.push({ role: "user", content: instruction });
+      }
 
       const content = await chatRegenerate({
         ...payload,
         attempt,
-        avoid_phrases: existingVariants.map(cleanThinkingTokens), // Evita fugas aquí también
+        avoid_phrases: existingVariants.map(cleanThinkingTokens),
       });
       const newVariants = [...existingVariants, content].slice(-4);
       const updated = { ...target, content, variants: newVariants, variantIndex: newVariants.length - 1 };
@@ -394,7 +391,7 @@ RECUERDA: NUNCA hables ni actúes por el usuario.`
     if (!character || busy) return;
     setBusy(true);
     try {
-      const sys = buildSystemPrompt({
+      const sys = buildStablePrompt({
         character, scene: session?.scene, profile, settings,
         memories: normalizeMemories(session?.memories), emotion: session?.emotion, history: [],
       });
@@ -405,7 +402,7 @@ RECUERDA: NUNCA hables ni actúes por el usuario.`
           { role: "user", content: ask },
         ],
         ...currentParams,
-        temperature: Math.min(1.5, currentParams.temperature + 0.2),
+        temperature: Math.min(0.70, currentParams.temperature + 0.05), // Protegemos el razonamiento en la intro
       };
       const content = await chatComplete(payload);
       const messages = session?.messages || [];
