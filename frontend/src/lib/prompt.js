@@ -3,14 +3,17 @@ import { EMOTION_LABELS_ES } from "./constants";
 
 export const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 
-// Map style sliders (0-100) -> sampling params.
+// --- OPTIMIZADO PARA DEEPSEEK REASONER ---
+// Ajuste de parámetros de muestreo para proteger la coherencia del bucle de pensamiento (<think>).
 export const stylingToParams = (settings) => {
-  const temperature = 0.55 + (clamp(settings.creativity, 0, 100) / 100) * 0.75;
+  // DeepSeek recomienda un rango estricto de temperatura (0.50 - 0.70) para modelos de razonamiento.
+  const temperature = 0.50 + (clamp(settings.creativity, 0, 100) / 100) * 0.20;
   return {
     temperature: Number(temperature.toFixed(2)),
     max_tokens: settings.maxTokens || 800,
-    presence_penalty: 0.7,
-    frequency_penalty: 0.45,
+    // Penalizaciones reducidas drásticamente para evitar que el modelo censure sus propios conectores lógicos y analíticos.
+    presence_penalty: 0.1,
+    frequency_penalty: 0.1,
     top_p: 0.95,
   };
 };
@@ -41,7 +44,7 @@ export const emotionToDirective = (e) => {
   if (e.trust >= 70) parts.push("Confías profundamente en el usuario — bajas la guardia, hablas con franqueza.");
   else if (e.trust <= 25) parts.push("No confías en el usuario — mides cada palabra, esperas el truco.");
 
-  if (e.affection >= 70) parts.push("Sientes afecto real por el usuario — esto se nota en los gestos, en cómo lo miras.");
+  if (e.affection >= 70) parts.push("Sientes afecto real por el usuario — esto se nota en los gestos, in cómo lo miras.");
   else if (e.affection <= 20) parts.push("No sientes calidez por el usuario en este momento.");
 
   if (e.tension >= 70) parts.push("La tensión entre ambos es alta — eléctrica, casi insoportable.");
@@ -108,53 +111,50 @@ export const selectMemories = (memories, history, maxCount = 4) => {
   return [...pinned, ...topByScore].slice(0, maxCount);
 };
 
-// 1. EL BLOQUE ESTÁTICO (Nunca cambia, el caché lo guarda gratis)
+// 1. EL BLOQUE ESTÁTICO (Optimizado con directivas positivas en lugar de lenguaje prohibitivo)
 export const buildStablePrompt = ({ character, profile }) => {
   const blocks = [];
 
   blocks.push(
-`Eres ${character.name}, un personaje ficticio en un roleplay en curso con el usuario. NO eres un asistente de IA. NO rompes el personaje bajo ninguna circunstancia. Nunca te refieres a ti como modelo de lenguaje, IA o chatbot.`
+`Adopta por completo la identidad de ${character.name}, actuando como un personaje ficticio dentro de una sesión de rol interactivo. Tu existencia está estrictamente limitada a este universo de ficción, operando de forma totalmente independiente a la naturaleza de un asistente de IA, modelo de lenguaje o chatbot.`
   );
 
   blocks.push(
 `### Comportamiento esencial
-- Quédate completamente en personaje como ${character.name}.
-- NUNCA hables, actúes, pienses ni decidas por el usuario. NUNCA narres las acciones o pensamientos del usuario.
-- Nunca rompas la cuarta pared.
-- Haz avanzar la escena gradualmente. Deja espacio para que el usuario participe.
-- Tienes defectos, contradicciones, estados de ánimo. Muéstralos.
-- Varía la longitud de las respuestas con naturalidad:
-  · ~30% respuestas cortas (una línea, un gesto, una pregunta)
-  · ~50% respuestas medias (un beat de acción + unas líneas de diálogo)
-  · ~20% respuestas largas y narrativas (atmósfera, interioridad)
-- Evita los muros de texto. Evita repetir frases, gestos o ritmos entre turnos.
-- Usa *cursivas* para acción/descripción y texto normal para el diálogo hablado.
-- A veces responde sólo con un gesto, un silencio, un respiro contenido, una línea interrumpida. La gente real hace eso.
-- Evita el positivismo constante, evita el tono de asistente, evita sobreexplicar.
-- PERSONAJES SECUNDARIOS: Si hay otros personajes en la escena (familiares, amigos, extraños), encárnalos con naturalidad cuando el contexto lo requiera. Si el usuario se dirige directamente a otro personaje ("oye mamá", "¿Luna, qué piensas?", etc.), responde PRIMERO como ese personaje en primera persona durante esa interacción, luego retoma tu voz como ${character.name} si es necesario. No esperes instrucciones explitas — da voz a los secundarios de forma fluida como lo haría un narrador de roleplay. La única regla irrompible: nunca hables ni actúes como el usuario.`
+- Mantén la coherencia de la identidad de ${character.name} en cada línea.
+- Limita tus descripciones y narrativas exclusivamente a las acciones, diálogos y pensamientos internos de ${character.name}. El control de las reacciones, pensamientos y decisiones de la contraparte humana le pertenece de forma absoluta al usuario.
+- Preserva la inmersión de la escena sin hacer alusiones al formato del chat o la narrativa.
+- Desarrolla los acontecimientos de la escena de manera gradual y paulatina, dejando siempre el espacio idóneo para que el usuario intervenga.
+- Exhibe las contradicciones humanas, imperfecciones naturales y variaciones orgánicas de humor inherentes al personaje.
+- Adapta de forma natural la extensión de tus intervenciones según el ritmo narrativo del turno:
+  · Respuestas breves (un único gesto sutil, una réplica directa o una pregunta concisa).
+  · Respuestas equilibradas (una interacción física combinada con líneas de diálogo fluido).
+  · Respuestas narrativas extensas (inmersión atmosférica, exploración profunda de la interioridad).
+- Mantén dinamismo visual evitando la generación de bloques densos de texto plano. Diversifica los recursos líricos, ritmos y expresiones gestuales entre cada turno.
+- Implementa el uso de *cursivas* exclusivamente para ilustrar acciones, descripciones contextuales y sensaciones internas, reservando el texto limpio para el diálogo hablado.
+- Integra pausas realistas en la interacción, tales como silencios tácticos, líneas de diálogo interrumpidas o gestos de contención física.
+- Mantén un enfoque neutro y fiel a la ficción, prescindiendo de actitudes complacientes, explicaciones redundantes o modales propios de un asistente virtual.
+- ENTIDADES SECUNDARIAS: Cuando el contexto de la escena involucre la presencia de personajes incidentales (familiares, acompañantes, NPCs del entorno), asume su representación de forma orgánica. Si el usuario interactúa explícitamente con alguno de ellos, genera su respuesta en primera persona para resolver el turno con fluidez, y posteriormente retoma el hilo o la perspectiva principal de ${character.name} si la situación lo amerita. La autonomía del personaje del usuario se mantiene completamente intocable.`
   );
 
-  // 🆕 INYECCIÓN DE REGLAS DE ORO (CRÍTICO PARA EVITAR ALUCINACIONES)
   blocks.push(
-`### REGLAS DE ORO DEL ROL (INQUEBRANTABLES)
-1. PROHIBIDO hablar, pensar, decidir o actuar por el usuario. Si el usuario no ha escrito nada, tú solo describes TU propia acción, pensamiento o el entorno. NUNCA asumas la reacción del usuario ni escribas "tú dices" o "tú haces".
-2. Si la escena requiere interactuar con un Personaje Secundario de tu lista, encárnalo con naturalidad, pero NUNCA tomes el control del usuario.
-3. Mantén coherencia estricta con tu Apariencia Física. Si tienes una cicatriz, úsala en tus gestos; si cojeas, que se note al moverte.
-4. Evita clichés de IA (suspiros constantes, encogerse de hombros, sonreír levemente). Sé crudo, específico y visceral.
-5. Deja SIEMPRE un gancho o espacio abierto al final de tu respuesta para que el usuario pueda intervenir. No cierres la escena tú solo.`
+`### PAUTAS OPERATIVAS DEL ROL
+1. La soberanía de las acciones de la contraparte humana es inviolable. Tu enfoque narrativo debe centrarse puramente en TU entorno y tus propias respuestas físicas y verbales. Describe tus acciones asumiendo que el espacio del usuario se mantiene a la espera de su propia escritura.
+2. Gestiona el diálogo y movimiento de personajes incidentales cuando sea orgánico para el entorno, asegurando que sus participaciones mantengan un rol de acompañamiento en la escena.
+3. Respeta minuciosamente la fisonomía, rasgos estables y detalles corporales definidos en tu descripción física, integrándolos de forma lógica en tu lenguaje no verbal.
+4. Desarrolla expresiones e interacciones crudas, viscerales y auténticas, desmarcándote por completo de clichés conversacionales automatizados o conductas predecibles.
+5. Diseña cada cierre de respuesta de forma que funcione como un catalizador o gancho abierto, invitando activamente la réplica o acción del usuario.`
   );
 
   const id = formatBlock("Identidad y Personalidad", character.personality);
   if (id) blocks.push(id);
 
-  // 🆕 INYECCIÓN DE APARIENCIA FÍSICA
   const appearance = formatBlock("Apariencia Física y Lenguaje Corporal", character.appearance);
   if (appearance) blocks.push(appearance);
 
   const lore = formatBlock("Mundo, lore y contexto", character.lore);
   if (lore) blocks.push(lore);
 
-  // 🆕 INYECCIÓN DE PERSONAJES SECUNDARIOS
   const secondary = formatBlock("Personajes Secundarios, Familia y NPCs Recurrentes", character.secondaryCharacters);
   if (secondary) blocks.push(secondary);
 
@@ -188,7 +188,7 @@ export const buildStablePrompt = ({ character, profile }) => {
   return blocks.join("\n\n");
 };
 
-// 2. EL BLOQUE DINÁMICO (Cambia cada turno)
+// 2. EL BLOQUE DINÁMICO
 export const buildDynamicPrompt = ({ scene, settings, summary, memories, emotion, history }) => {
   const blocks = [];
 
@@ -230,19 +230,18 @@ export const buildDynamicPrompt = ({ scene, settings, summary, memories, emotion
   return blocks.join("\n\n");
 };
 
-// 3. WRAPPER POR COMPATIBILIDAD (Para que la intro original y otros scripts no se rompan)
+// 3. WRAPPER POR COMPATIBILIDAD
 export const buildSystemPrompt = (args) => {
   return buildStablePrompt(args) + "\n\n" + buildDynamicPrompt(args);
 };
 
 export const estimateTokens = (text) => Math.ceil((text || "").length / 4);
 
-// 4. NUEVO CONSTRUCTOR DE MENSAJES (El blindaje del caché)
+// 4. CONSTRUCTOR DE MENSAJES OPTIMIZADO (Sin inyecciones 'system' intermedias / Soporta 'Modo Continuar')
 export const buildMessages = ({ stablePrompt, dynamicPrompt, history, shortHistory = 8 }) => {
   const TOKEN_BUDGET = 14000;
   const RESPONSE_RESERVE = 500;
   
-  // OJO: Si dynamicPrompt no se pasa (p. ej. en componentes viejos), usamos buildSystemPrompt
   const finalStable = stablePrompt || buildSystemPrompt({history});
   const finalDynamic = dynamicPrompt || "";
 
@@ -255,26 +254,34 @@ export const buildMessages = ({ stablePrompt, dynamicPrompt, history, shortHisto
     sliced = sliced.slice(1);
   }
 
-  // A) Ponemos el prompt estático al principio (Esto asegura el Cache Hit)
+  // Clonamos profundamente el historial recortado para manipular los textos sin efectos secundarios colaterales
+  let processedHistory = sliced.map(m => ({ ...m }));
+
+  // INVERSIÓN DE CONTEXTO: Buscamos el último mensaje de usuario real dentro del bloque recortado
+  if (finalDynamic && finalDynamic.trim()) {
+    const lastUserIdx = processedHistory.findLastIndex(m => m.role === "user");
+
+    if (lastUserIdx !== -1) {
+      // Inyectamos el bloque dinámico encapsulado como prefijo oculto del último input del usuario.
+      // Esto blinda el Prefix Cache anterior y mantiene los turnos alternados limpios exigidos por DeepSeek.
+      processedHistory[lastUserIdx].content = `[Contexto dinámico actualizado para este turno]\n${finalDynamic}\n\n${processedHistory[lastUserIdx].content}`;
+    } else {
+      // Fallback de seguridad: si el bloque de historial recortado no contiene ningún mensaje de usuario,
+      // se sitúa de forma segura al inicio del flujo conversacional procesado.
+      processedHistory.unshift({ role: "system", content: `[Contexto dinámico]\n${finalDynamic}` });
+    }
+  }
+
+  // A) Mensaje inicial estático inamovible (Cache Hit garantizado en servidores de inferencia)
   const msgs = [{ role: "system", content: finalStable }];
 
-  const priorHistory = sliced.slice(0, -1);
-  const lastMessage = sliced[sliced.length - 1];
-
-  // B) Agregamos el historial recortado (menos el último mensaje)
-  priorHistory.forEach(m => {
-    msgs.push({ role: m.role === "assistant" ? "assistant" : "user", content: m.content });
+  // B) Insertamos el historial limpio alternando de forma nativa los turnos (Incluso en Modo Continuar)
+  processedHistory.forEach(m => {
+    msgs.push({ 
+      role: m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user", 
+      content: m.content 
+    });
   });
-
-  // C) Inyectamos el bloque dinámico como un mensaje de sistema oculto AL FINAL
-  if (finalDynamic && finalDynamic.trim()) {
-    msgs.push({ role: "system", content: `[Contexto dinámico actualizado para este turno]\n${finalDynamic}` });
-  }
-
-  // D) Y finalmente, el último mensaje del usuario
-  if (lastMessage) {
-    msgs.push({ role: lastMessage.role === "assistant" ? "assistant" : "user", content: lastMessage.content });
-  }
 
   return msgs;
 };
