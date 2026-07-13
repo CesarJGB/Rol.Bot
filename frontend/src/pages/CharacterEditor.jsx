@@ -4,9 +4,10 @@ import { useApp, blankCharacter } from "../context/AppContext";
 import { TopBar } from "../components/TopBar";
 import { DEFAULT_AVATARS } from "../lib/constants";
 import { exportCharacter } from "../lib/storage";
+import { downloadCharacterTemplate } from "../lib/characterTemplate";
 import { toast } from "sonner";
-import { autoFillCharacter } from "../lib/api";
-import { Trash2, Save, Image as ImageIcon, Download, Wand2 } from "lucide-react";
+import { autoFillCharacter, friendlyError } from "../lib/api";
+import { Trash2, Save, Image as ImageIcon, Download, Wand2, FileDown } from "lucide-react";
 
 const Field = ({ label, hint, children, testId }) => (
   <div className="mb-5" data-testid={testId ? `field-${testId}` : undefined}>
@@ -18,6 +19,85 @@ const Field = ({ label, hint, children, testId }) => (
 
 const inputClass =
   "w-full bg-[#0a0a0a] border border-white/[0.08] rounded-lg px-3.5 py-2.5 text-sm text-[#EDEDED] placeholder:text-[#71717A] focus:outline-none focus:border-[#C6A45C]/60 transition-all";
+
+const appearancePlaceholder = `overall:
+face:
+hair:
+eyes:
+body:
+clothing:
+bodyLanguage:
+voice:
+specialFeatures:`;
+
+const secondaryCharactersPlaceholder = `- name:
+  relation:
+  role:
+  appearance:
+  personality:
+  speakingStyle:
+  triggerConditions:
+  turnRules:
+  sampleLine:`;
+
+const looksLikeFullBlueprint = (value) => {
+  const text = String(value || "").trim();
+  if (!text) return false;
+
+  if (text.startsWith("{") && /"(?:name|tagline|personality|appearance|secondaryCharacters|sceneDefault)"\s*:/.test(text)) {
+    return true;
+  }
+
+  const matches = text.match(/^(name|tagline|personality|appearance|lore|secondaryCharacters|speakingStyle|emotionalTendencies|exampleDialogues|tags|initialMessage|sceneDefault)\s*:/gm) || [];
+  return new Set(matches.map(match => match.split(":")[0].trim())).size >= 3;
+};
+
+const buildAutoFillSource = (form) => {
+  const rawBlueprint = [
+    form.personality,
+    form.lore,
+    form.appearance,
+    form.secondaryCharacters,
+    form.exampleDialogues,
+    form.initialMessage,
+  ].find(looksLikeFullBlueprint);
+
+  if (rawBlueprint) {
+    return String(rawBlueprint).trim();
+  }
+
+  const blocks = [];
+  const add = (label, value) => {
+    if (!value) return;
+    const text = String(value).trim();
+    if (!text) return;
+    blocks.push(`${label}:\n${text}`);
+  };
+
+  add("name", form.name);
+  add("tagline", form.tagline);
+  add("personality", form.personality);
+  add("appearance", form.appearance);
+  add("lore", form.lore);
+  add("secondaryCharacters", form.secondaryCharacters);
+  add("speakingStyle", form.speakingStyle);
+  add("emotionalTendencies", form.emotionalTendencies);
+  add("exampleDialogues", form.exampleDialogues);
+  add("tags", Array.isArray(form.tags) ? form.tags.join(", ") : form.tags);
+  add("initialMessage", form.initialMessage);
+
+  const sceneLines = [
+    form.sceneDefault?.location?.trim() ? `location: ${form.sceneDefault.location.trim()}` : "",
+    form.sceneDefault?.atmosphere?.trim() ? `atmosphere: ${form.sceneDefault.atmosphere.trim()}` : "",
+    form.sceneDefault?.characterEmotion?.trim() ? `characterEmotion: ${form.sceneDefault.characterEmotion.trim()}` : "",
+  ].filter(Boolean);
+
+  if (sceneLines.length > 0) {
+    blocks.push(`sceneDefault:\n${sceneLines.join("\n")}`);
+  }
+
+  return blocks.join("\n\n");
+};
 
 // Comprime una imagen a máximo MAX_SIZExMAX_SIZE px en JPEG calidad QUALITY.
 // Reduce un avatar típico de ~300-800KB a ~15-40KB.
@@ -76,14 +156,14 @@ export default function CharacterEditor() {
 
   // --- FUNCIÓN MANEJADORA DE AUTO-RELLENO (Mover aquí adentro) ---
   const handleAutoFill = async () => {
-    const baseDesc = form.personality || form.lore || "";
+    const baseDesc = buildAutoFillSource(form);
     if (baseDesc.trim().length < 20) {
-      toast.error("Pega tu JSON o texto base en el campo 'Personalidad' primero.");
+      toast.error("Añade un briefing, YAML o texto base suficiente antes de usar el auto-rellenado.");
       return;
     }
 
     setAutofilling(true);
-    toast.info("Analizando y repartiendo en YAML...");
+    toast.info("Analizando y repartiendo la ficha...");
     try {
       const data = await autoFillCharacter({
         base_description: baseDesc,
@@ -92,17 +172,26 @@ export default function CharacterEditor() {
       
       setForm(s => ({
         ...s,
+        name: data.name || s.name,
         tagline: data.tagline || s.tagline,
         personality: data.personality || s.personality,
+        appearance: data.appearance || s.appearance,
         lore: data.lore || s.lore,
+        secondaryCharacters: data.secondaryCharacters || s.secondaryCharacters,
         speakingStyle: data.speakingStyle || s.speakingStyle,
         emotionalTendencies: data.emotionalTendencies || s.emotionalTendencies,
         exampleDialogues: data.exampleDialogues || s.exampleDialogues,
         tags: data.tags?.length ? data.tags : s.tags,
+        initialMessage: data.initialMessage || s.initialMessage,
+        sceneDefault: {
+          location: data.sceneDefault?.location || s.sceneDefault?.location || "",
+          atmosphere: data.sceneDefault?.atmosphere || s.sceneDefault?.atmosphere || "",
+          characterEmotion: data.sceneDefault?.characterEmotion || s.sceneDefault?.characterEmotion || "",
+        },
       }));
       toast.success("¡Tarjeta auto-completada con éxito!");
     } catch (err) {
-      toast.error("Error al procesar: " + err.message);
+      toast.error(friendlyError(err));
     } finally {
       setAutofilling(false);
     }
@@ -139,6 +228,11 @@ export default function CharacterEditor() {
     navigate("/");
   };
 
+  const handleDownloadTemplate = () => {
+    downloadCharacterTemplate({ name: form.name || "" });
+    toast.success("Plantilla descargada");
+  };
+
   const handleExport = () => {
     const bundle = getBundle(form.id);
     const data = exportCharacter(form, bundle);
@@ -159,12 +253,20 @@ export default function CharacterEditor() {
         title={isNew ? "Nuevo personaje" : form.name || "Editar"}
         subtitle={isNew ? "Creación" : "Editando"}
         right={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <button
+              onClick={handleDownloadTemplate}
+              className="inline-flex items-center gap-1.5 border border-white/[0.10] hover:bg-white/5 text-[#EDEDED] rounded-full px-4 py-2 text-sm font-medium transition-all"
+              title="Descarga una plantilla YAML con todos los campos para generar fichas con modelos externos"
+            >
+              <FileDown size={14} />
+              Plantilla
+            </button>
             <button
               onClick={handleAutoFill}
               disabled={autofilling}
               className="inline-flex items-center gap-1.5 border border-[#C6A45C]/50 hover:bg-[#C6A45C]/10 text-[#C6A45C] disabled:opacity-50 rounded-full px-4 py-2 text-sm font-medium transition-all"
-              title="Pega tu JSON en Personalidad y la IA rellenará todo en YAML"
+              title="Analiza tu briefing, YAML o JSON actual y lo reparte en toda la ficha"
             >
               <Wand2 size={14} />
               {autofilling ? "Pensando..." : "Auto-Rellenar"}
@@ -223,8 +325,14 @@ export default function CharacterEditor() {
         <Field label="Personalidad" hint="Quién es en el fondo. Rasgos, contradicciones, qué le mueve." testId="personality">
           <textarea data-testid="character-personality-input" className={`${inputClass} min-h-[80px] resize-y`} value={form.personality} onChange={set("personality")} />
         </Field>
+        <Field label="Apariencia física y rasgos especiales" hint="Describe cuerpo, rostro, ropa, lenguaje corporal y cualquier rasgo no humano o fantástico en un apartado 'specialFeatures'." testId="appearance">
+          <textarea data-testid="character-appearance-input" className={`${inputClass} min-h-[110px] resize-y`} value={form.appearance || ""} onChange={set("appearance")} placeholder={appearancePlaceholder} />
+        </Field>
         <Field label="Mundo y lore" hint="Escenario, trasfondo, situación actual." testId="lore">
           <textarea data-testid="character-lore-input" className={`${inputClass} min-h-[80px] resize-y`} value={form.lore} onChange={set("lore")} />
+        </Field>
+        <Field label="Personajes secundarios y reparto" hint="Lista familiares, aliados o NPCs recurrentes con su relación, personalidad, voz y cuándo pueden entrar en escena o tomar turno." testId="secondaryCharacters">
+          <textarea data-testid="character-secondary-characters-input" className={`${inputClass} min-h-[140px] resize-y`} value={form.secondaryCharacters || ""} onChange={set("secondaryCharacters")} placeholder={secondaryCharactersPlaceholder} />
         </Field>
         <Field label="Forma de hablar" hint="Cadencia, vocabulario, manías." testId="speakingStyle">
           <textarea data-testid="character-style-input" className={`${inputClass} min-h-[60px] resize-y`} value={form.speakingStyle} onChange={set("speakingStyle")} />
@@ -232,8 +340,8 @@ export default function CharacterEditor() {
         <Field label="Tendencias emocionales" hint="Humor por defecto, qué le ablanda o le endurece." testId="emotional">
           <textarea data-testid="character-emotional-input" className={`${inputClass} min-h-[60px] resize-y`} value={form.emotionalTendencies} onChange={set("emotionalTendencies")} />
         </Field>
-        <Field label="Diálogo de ejemplo" hint="Muestra cómo habla. Formato Usuario: / Nombre:" testId="example">
-          <textarea data-testid="character-example-input" className={`${inputClass} min-h-[80px] resize-y font-mono text-[12.5px]`} value={form.exampleDialogues} onChange={set("exampleDialogues")} />
+        <Field label="Diálogo de ejemplo" hint="Muestra cómo hablan el personaje principal y, si aplica, algún secundario. Formato sugerido: Usuario: / Nombre: / Secundario:" testId="example">
+          <textarea data-testid="character-example-input" className={`${inputClass} min-h-[80px] resize-y font-mono text-[12.5px]`} value={form.exampleDialogues} onChange={set("exampleDialogues")} placeholder={"Usuario: ...\nPersonaje principal: ...\nSecundario: ..."} />
         </Field>
         <Field label="Etiquetas" hint="Separadas por comas. p. ej. fantasía, slow-burn, antihéroe" testId="tags">
           <input

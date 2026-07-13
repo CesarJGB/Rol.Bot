@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { chatComplete, chatStream, chatRegenerate, chatContinue, extractMemories, summarizeChat, updateEmotion } from "../lib/api";
+import { chatComplete, chatStream, chatRegenerate, chatContinue, extractMemories, summarizeChat, updateEmotion, friendlyError } from "../lib/api";
 import { buildStablePrompt, buildDynamicPrompt, buildMessages, stylingToParams } from "../lib/prompt";
 import { looksCutOff } from "../lib/textUtil";
 import { DEFAULT_EMOTION } from "../lib/constants";
@@ -22,7 +22,7 @@ const cleanThinkingTokens = (text) => {
   return text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
 };
 
-export function useChatActions({ character, session, characterId, profile, settings, updateActiveSession, updateSession, resetActiveSession }) {
+export function useChatActions({ character, session, characterId, profile, settings, updateSession }) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [streamingPlaceholder, setStreamingPlaceholder] = useState(false);
@@ -30,8 +30,29 @@ export function useChatActions({ character, session, characterId, profile, setti
 
   const abortRef = useRef(null);
   const bgUpdateInFlight = useRef(null);
+  const prevSessionIdRef = useRef(session?.id || null);
 
   const currentParams = useMemo(() => stylingToParams(settings), [settings]);
+
+  const updateBoundSession = useCallback((sessionId, updater) => {
+    if (!sessionId) return;
+    updateSession(characterId, sessionId, updater);
+  }, [characterId, updateSession]);
+
+  useEffect(() => {
+    const nextSessionId = session?.id || null;
+    const prevSessionId = prevSessionIdRef.current;
+
+    if (prevSessionId && prevSessionId !== nextSessionId && abortRef.current) {
+      abortRef.current.abort();
+    }
+
+    prevSessionIdRef.current = nextSessionId;
+  }, [session?.id]);
+
+  useEffect(() => () => {
+    if (abortRef.current) abortRef.current.abort();
+  }, []);
 
   // Construye el payload optimizado limpiando la grasa de tokens históricos
   const buildPayload = useCallback((history) => {
@@ -121,6 +142,7 @@ export function useChatActions({ character, session, characterId, profile, setti
             const existingTexts = new Set((s.memories || []).map(m => (typeof m === "string" ? m : m.text).toLowerCase().trim()));
             const merged = normalizeMemories(s.memories);
             for (const m of r.value) {
+              if (typeof m !== "string" || !m.trim()) continue;
               const key = m.toLowerCase().trim();
               if (!existingTexts.has(key)) {
                 existingTexts.add(key);
@@ -144,12 +166,14 @@ export function useChatActions({ character, session, characterId, profile, setti
     const text = input.trim();
     if (!text || busy || !character || !session) return;
 
+    const sessionId = session.id;
+
     const userMsg = newMessage("user", text);
     const aiMsg = newMessage("assistant", "");
     const messagesWithUser = [...(session.messages || []), userMsg];
     const messagesWithAI = [...messagesWithUser, aiMsg];
 
-    updateActiveSession(characterId, (s) => ({ ...s, messages: messagesWithAI }));
+    updateBoundSession(sessionId, (s) => ({ ...s, messages: messagesWithAI }));
     setInput("");
     setBusy(true);
     setStreamingMsgId(aiMsg.id);
@@ -171,7 +195,7 @@ export function useChatActions({ character, session, characterId, profile, setti
           const now = Date.now();
           if (now - lastFlush > 40 || buffer.length > 30) {
             const snapshot = finalContent;
-            updateActiveSession(characterId, (s) => {
+            updateBoundSession(sessionId, (s) => {
               const msgs = [...s.messages];
               const idx = msgs.findIndex(m => m.id === aiMsg.id);
               if (idx >= 0) msgs[idx] = { ...msgs[idx], content: snapshot };
@@ -183,7 +207,7 @@ export function useChatActions({ character, session, characterId, profile, setti
         }
         if (buffer.length > 0) {
           const snapshot = finalContent;
-          updateActiveSession(characterId, (s) => {
+          updateBoundSession(sessionId, (s) => {
             const msgs = [...s.messages];
             const idx = msgs.findIndex(m => m.id === aiMsg.id);
             if (idx >= 0) msgs[idx] = { ...msgs[idx], content: snapshot };
@@ -214,7 +238,7 @@ export function useChatActions({ character, session, characterId, profile, setti
               const glue = /^[ ,.!?*"\)\]]/.test(tail) ? "" : " ";
               finalContent = trimmedContent + glue + tail;
               
-              updateActiveSession(characterId, (s) => {
+              updateBoundSession(sessionId, (s) => {
                 const msgs = [...s.messages];
                 const idx = msgs.findIndex(m => m.id === aiMsg.id);
                 if (idx >= 0) msgs[idx] = { ...msgs[idx], content: finalContent };
@@ -225,7 +249,7 @@ export function useChatActions({ character, session, characterId, profile, setti
         }
       } else {
         finalContent = await chatComplete(payload);
-        updateActiveSession(characterId, (s) => {
+        updateBoundSession(sessionId, (s) => {
           const msgs = [...s.messages];
           const idx = msgs.findIndex(m => m.id === aiMsg.id);
           if (idx >= 0) msgs[idx] = { ...msgs[idx], content: finalContent };
@@ -234,7 +258,7 @@ export function useChatActions({ character, session, characterId, profile, setti
       }
 
       if (!finalContent.trim()) {
-        updateActiveSession(characterId, (s) => ({ ...s, messages: s.messages.filter(m => m.id !== aiMsg.id) }));
+        updateBoundSession(sessionId, (s) => ({ ...s, messages: s.messages.filter(m => m.id !== aiMsg.id) }));
         toast.error("El modelo devolvió una respuesta vacía. Inténtalo de nuevo.");
         return;
       }
@@ -242,22 +266,26 @@ export function useChatActions({ character, session, characterId, profile, setti
       const settled = [...messagesWithUser, { ...aiMsg, content: finalContent }];
       runBackgroundUpdates(settled, session.summary, session.memories, session.emotion);
     } catch (err) {
-      if (err.name !== "AbortError") {
-        console.error(err);
-        toast.error("No se pudo contactar con el modelo. Revisa tu conexión.");
-        if (!finalContent) {
-          updateActiveSession(characterId, (s) => ({ ...s, messages: s.messages.filter(m => m.id !== aiMsg.id) }));
-        }
+      if (err.name === "AbortError") {
+        updateBoundSession(sessionId, (s) => ({ ...s, messages: s.messages.filter(m => m.id !== aiMsg.id) }));
+        return;
+      }
+
+      console.error(err);
+      toast.error(friendlyError(err));
+      if (!finalContent) {
+        updateBoundSession(sessionId, (s) => ({ ...s, messages: s.messages.filter(m => m.id !== aiMsg.id) }));
       }
     } finally {
       setBusy(false);
       setStreamingMsgId(null);
-      abortRef.current = null;
+      if (abortRef.current === controller) abortRef.current = null;
     }
   };
 
   const handleContinue = async () => {
     if (!character || !session || busy) return;
+    const sessionId = session.id;
     const messages = session.messages || [];
     if (messages.length === 0) return;
 
@@ -284,10 +312,10 @@ export function useChatActions({ character, session, characterId, profile, setti
       }
       const aiMsg = newMessage("assistant", content);
       const updatedMessages = [...messages, aiMsg];
-      updateActiveSession(characterId, (s) => ({ ...s, messages: updatedMessages }));
+      updateBoundSession(sessionId, (s) => ({ ...s, messages: updatedMessages }));
       runBackgroundUpdates(updatedMessages, session.summary, session.memories, session.emotion);
-    } catch {
-      toast.error("No se pudo continuar la escena.");
+    } catch (err) {
+      toast.error(friendlyError(err));
     } finally {
       setBusy(false);
       setStreamingPlaceholder(false);
@@ -295,14 +323,16 @@ export function useChatActions({ character, session, characterId, profile, setti
   };
 
   const handleEdit = async (msgIndex, newContent) => {
+    if (busy) return;
+    const sessionId = session?.id;
     const messages = session?.messages || [];
     const original = messages[msgIndex];
-    if (!original) return;
+    if (!sessionId || !original) return;
 
     if (original.role === "user") {
       const trimmed = messages.slice(0, msgIndex + 1);
       trimmed[msgIndex] = { ...original, content: newContent };
-      updateActiveSession(characterId, (s) => ({ ...s, messages: trimmed }));
+      updateBoundSession(sessionId, (s) => ({ ...s, messages: trimmed }));
 
       setBusy(true);
       setStreamingPlaceholder(true);
@@ -311,10 +341,10 @@ export function useChatActions({ character, session, characterId, profile, setti
         const content = await chatComplete(payload);
         const aiMsg = newMessage("assistant", content);
         const updatedMessages = [...trimmed, aiMsg];
-        updateActiveSession(characterId, (s) => ({ ...s, messages: updatedMessages }));
+        updateBoundSession(sessionId, (s) => ({ ...s, messages: updatedMessages }));
         runBackgroundUpdates(updatedMessages, session?.summary, session?.memories, session?.emotion);
-      } catch {
-        toast.error("No se pudo regenerar después de editar.");
+      } catch (err) {
+        toast.error(friendlyError(err));
       } finally {
         setBusy(false);
         setStreamingPlaceholder(false);
@@ -322,21 +352,25 @@ export function useChatActions({ character, session, characterId, profile, setti
     } else {
       const next = [...messages];
       next[msgIndex] = { ...original, content: newContent, variants: [newContent], variantIndex: 0 };
-      updateActiveSession(characterId, (s) => ({ ...s, messages: next }));
+      updateBoundSession(sessionId, (s) => ({ ...s, messages: next }));
     }
   };
 
   const handleDelete = (msgIndex) => {
+    if (busy) return;
+    const sessionId = session?.id;
     const messages = session?.messages || [];
+    if (!sessionId) return;
     const next = [...messages];
     next.splice(msgIndex, 1);
-    updateActiveSession(characterId, (c) => ({ ...c, messages: next }));
+    updateBoundSession(sessionId, (s) => ({ ...s, messages: next }));
   };
 
   const handleRegenerate = async (msgIndex) => {
+    const sessionId = session?.id;
     const messages = session?.messages || [];
     const target = messages[msgIndex];
-    if (!target || target.role !== "assistant" || busy) return;
+    if (!sessionId || !target || target.role !== "assistant" || busy) return;
 
     const history = messages.slice(0, msgIndex);
     const existingVariants = target.variants && target.variants.length > 0 ? target.variants : [target.content];
@@ -366,9 +400,9 @@ export function useChatActions({ character, session, characterId, profile, setti
       const updated = { ...target, content, variants: newVariants, variantIndex: newVariants.length - 1 };
       const next = [...messages];
       next[msgIndex] = updated;
-      updateActiveSession(characterId, (s) => ({ ...s, messages: next }));
-    } catch {
-      toast.error("La regeneración falló.");
+      updateBoundSession(sessionId, (s) => ({ ...s, messages: next }));
+    } catch (err) {
+      toast.error(friendlyError(err));
     } finally {
       setBusy(false);
       setStreamingPlaceholder(false);
@@ -376,19 +410,23 @@ export function useChatActions({ character, session, characterId, profile, setti
   };
 
   const handleSwipe = (msgIndex, delta) => {
+    if (busy) return;
+    const sessionId = session?.id;
     const messages = session?.messages || [];
     const target = messages[msgIndex];
-    if (!target?.variants || target.variants.length < 2) return;
+    if (!sessionId || !target?.variants || target.variants.length < 2) return;
     const total = target.variants.length;
     const next = ((target.variantIndex ?? 0) + delta + total) % total;
     const updated = { ...target, variantIndex: next, content: target.variants[next] };
     const arr = [...messages];
     arr[msgIndex] = updated;
-    updateActiveSession(characterId, (s) => ({ ...s, messages: arr }));
+    updateBoundSession(sessionId, (s) => ({ ...s, messages: arr }));
   };
 
   const handleRegenIntro = async () => {
     if (!character || busy) return;
+    const sessionId = session?.id;
+    if (!sessionId) return;
     setBusy(true);
     try {
       const sys = buildStablePrompt({
@@ -407,15 +445,15 @@ export function useChatActions({ character, session, characterId, profile, setti
       const content = await chatComplete(payload);
       const messages = session?.messages || [];
       if (messages.length === 0) {
-        updateActiveSession(characterId, (s) => ({ ...s, messages: [{ ...newMessage("assistant", content), isInitial: true }] }));
+        updateBoundSession(sessionId, (s) => ({ ...s, messages: [{ ...newMessage("assistant", content), isInitial: true }] }));
       } else if (messages[0]?.isInitial) {
         const next = [...messages];
         next[0] = { ...next[0], content };
-        updateActiveSession(characterId, (s) => ({ ...s, messages: next }));
+        updateBoundSession(sessionId, (s) => ({ ...s, messages: next }));
       }
       toast.success("Nueva apertura generada");
-    } catch {
-      toast.error("No se pudo generar la apertura.");
+    } catch (err) {
+      toast.error(friendlyError(err));
     } finally {
       setBusy(false);
     }

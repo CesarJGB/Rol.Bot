@@ -36,7 +36,7 @@ export default function Chat() {
   // Despachamos toda la lógica pesada al hook dedicado
   const chatActions = useChatActions({
     character, session, characterId, profile, settings,
-    updateActiveSession, updateSession, resetActiveSession
+    updateSession
   });
 
   useEffect(() => {
@@ -159,6 +159,7 @@ export default function Chat() {
       <ChatsSheet
         open={chatsOpen}
         onOpenChange={setChatsOpen}
+        busy={chatActions.busy}
         sessions={bundle.sessions || {}}
         activeSessionId={bundle.activeSessionId}
         onSwitch={(sid) => switchSession(characterId, sid)}

@@ -45,6 +45,7 @@ export function ChatMessagesList({
             <MessageBubble
               key={m.id}
               message={m}
+              disabled={busy}
               isUser={m.role === "user"}
               isInitial={!!m.isInitial}
               characterAvatar={character.avatar}

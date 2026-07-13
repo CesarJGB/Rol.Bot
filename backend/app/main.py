@@ -4,7 +4,7 @@ from starlette.middleware.cors import CORSMiddleware
 import os
 import logging
 
-from app.config import DEEPSEEK_MODEL, CORS_ORIGINS
+from app.config import DEEPSEEK_MODEL, CORS_ORIGINS, DEEPSEEK_API_KEY
 from app.core.client import deepseek_agent
 from app.routers import chat, utility
 
@@ -29,7 +29,7 @@ async def root():
 
 @api_router.get("/health")
 async def health():
-    return {"status": "ok", "model": DEEPSEEK_MODEL, "has_key": bool(deepseek_agent.client)}
+    return {"status": "ok", "model": DEEPSEEK_MODEL, "has_key": bool(DEEPSEEK_API_KEY)}
 
 app.include_router(api_router)
 

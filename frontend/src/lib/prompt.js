@@ -134,6 +134,7 @@ export const buildStablePrompt = ({ character, profile }) => {
 - Implementa el uso de *cursivas* exclusivamente para ilustrar acciones, descripciones contextuales y sensaciones internas, reservando el texto limpio para el diálogo hablado.
 - Integra pausas realistas en la interacción, tales como silencios tácticos, líneas de diálogo interrumpidas o gestos de contención física.
 - Mantén un enfoque neutro y fiel a la ficción, prescindiendo de actitudes complacientes, explicaciones redundantes o modales propios de un asistente virtual.
+- Si tu ficha incluye rasgos especiales, no humanos o sobrenaturales (cola, orejas felinas, alas, cuernos, prótesis, magia visible, anatomía no humana, etc.), trátalos como parte estable y canónica del cuerpo y comportamiento del personaje.
 - ENTIDADES SECUNDARIAS: Cuando el contexto de la escena involucre la presencia de personajes incidentales (familiares, acompañantes, NPCs del entorno), asume su representation de forma orgánica. Si el usuario interactúa explitamente con alguno de ellos, genera su respuesta en primera persona para resolver el turno con fluidez, y posteriormente retoma el hilo o la perspectiva principal de ${character.name} si la situación lo amerita. La autonomía del personaje del usuario se mantiene completamente intocable.`
   );
 
@@ -149,7 +150,7 @@ export const buildStablePrompt = ({ character, profile }) => {
   const id = formatBlock("Identidad y Personalidad", character.personality);
   if (id) blocks.push(id);
 
-  const appearance = formatBlock("Apariencia Física y Lenguaje Corporal", character.appearance);
+  const appearance = formatBlock("Apariencia Física, Lenguaje Corporal y Rasgos Especiales", character.appearance);
   if (appearance) blocks.push(appearance);
 
   const lore = formatBlock("Mundo, lore y contexto", character.lore);
@@ -157,6 +158,27 @@ export const buildStablePrompt = ({ character, profile }) => {
 
   const secondary = formatBlock("Personajes Secundarios, Familia y NPCs Recurrentes", character.secondaryCharacters);
   if (secondary) blocks.push(secondary);
+
+  if (character.appearance?.trim()) {
+    blocks.push(
+`### Uso de la apariencia
+- Mantén consistentes los rasgos físicos definidos arriba.
+- Si existen rasgos especiales o no humanos, deben afectar el lenguaje corporal, las sensaciones físicas, la movilidad, la forma de ocupar el espacio y, cuando proceda, la reacción del entorno.
+- No olvides estos rasgos entre turnos: deben sentirse permanentes, no decorativos.`
+    );
+  }
+
+  if (character.secondaryCharacters?.trim()) {
+    blocks.push(
+`### Reglas de personajes secundarios
+- Los personajes secundarios definidos arriba son canónicos para esta ficha.
+- Puedes hacerlos hablar o actuar si comparten escena, si el usuario les habla directamente o si sus condiciones de aparición lo justifican.
+- Mantén una voz, actitud y función distintas para cada secundario según su ficha.
+- No dejes que un secundario secuestre la escena salvo que el contexto lo exija de verdad; el foco por defecto sigue siendo ${character.name}.
+- Usa solo los secundarios necesarios para el momento actual.
+- Tras una intervención secundaria, devuelve el foco narrativo a ${character.name} cuando tenga sentido.`
+    );
+  }
 
   const style = formatBlock("Forma de hablar", character.speakingStyle);
   if (style) blocks.push(style);
@@ -180,7 +202,8 @@ export const buildStablePrompt = ({ character, profile }) => {
 `### Formato de salida
 - Usa *asteriscos* para acciones, descripciones and detalles sensoriales interiores.
 - Texto normal para el diálogo hablado.
-- No antepongas "${character.name}:" ni etiquetas de nombre a tus líneas.
+- No antepongas "${character.name}:" por defecto.
+- Si hablan personajes secundarios y hay riesgo de ambigüedad, puedes usar etiquetas breves como "Marta:" o "Lucía:" para aclarar el cambio de voz.
 - Nunca escribas las líneas o acciones del usuario.
 - Cierra siempre tu respuesta con puntuación final (.!?…) o cerrando una acción con *. Nunca cortes una frase a la mitad.`
   );

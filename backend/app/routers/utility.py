@@ -6,6 +6,81 @@ import json
 
 router = APIRouter(prefix="/chat", tags=["AI Utility Operations"])
 
+AUTO_FILL_DEFAULTS = {
+    "name": "",
+    "tagline": "",
+    "personality": "",
+    "appearance": "",
+    "lore": "",
+    "secondaryCharacters": "",
+    "speakingStyle": "",
+    "emotionalTendencies": "",
+    "exampleDialogues": "",
+    "tags": [],
+    "initialMessage": "",
+    "sceneDefault": {
+        "location": "",
+        "atmosphere": "",
+        "characterEmotion": "",
+    },
+}
+
+
+def _as_clean_text(value):
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _pick(value, *keys):
+    for key in keys:
+        if isinstance(value, dict) and key in value and value.get(key) not in (None, ""):
+            return value.get(key)
+    return None
+
+
+def _normalize_tags(value):
+    if isinstance(value, list):
+        return [str(tag).strip() for tag in value if str(tag).strip()]
+    if isinstance(value, str):
+        return [tag.strip() for tag in value.split(",") if tag.strip()]
+    return []
+
+
+def _normalize_scene_default(value):
+    scene = AUTO_FILL_DEFAULTS["sceneDefault"].copy()
+    if not isinstance(value, dict):
+        return scene
+    scene["location"] = _as_clean_text(_pick(value, "location"))
+    scene["atmosphere"] = _as_clean_text(_pick(value, "atmosphere"))
+    scene["characterEmotion"] = _as_clean_text(_pick(value, "characterEmotion", "character_emotion", "emotion"))
+    return scene
+
+
+def _normalize_character_data(value):
+    if isinstance(value, dict) and isinstance(value.get("character_data"), dict):
+        value = value["character_data"]
+    if not isinstance(value, dict):
+        return {
+            **AUTO_FILL_DEFAULTS,
+            "tags": [],
+            "sceneDefault": AUTO_FILL_DEFAULTS["sceneDefault"].copy(),
+        }
+
+    normalized = {
+        "name": _as_clean_text(_pick(value, "name", "characterName")),
+        "tagline": _as_clean_text(_pick(value, "tagline", "summaryLine")),
+        "personality": _as_clean_text(_pick(value, "personality", "identity")),
+        "appearance": _as_clean_text(_pick(value, "appearance", "physicalDescription")),
+        "lore": _as_clean_text(_pick(value, "lore", "worldLore", "context")),
+        "secondaryCharacters": _as_clean_text(_pick(value, "secondaryCharacters", "secondary_characters", "supportingCharacters")),
+        "speakingStyle": _as_clean_text(_pick(value, "speakingStyle", "speechStyle", "voiceStyle")),
+        "emotionalTendencies": _as_clean_text(_pick(value, "emotionalTendencies", "emotionalProfile")),
+        "exampleDialogues": _as_clean_text(_pick(value, "exampleDialogues", "exampleDialogue", "sampleDialogue")),
+        "tags": _normalize_tags(_pick(value, "tags", "keywords")),
+        "initialMessage": _as_clean_text(_pick(value, "initialMessage", "openingMessage", "firstMessage")),
+        "sceneDefault": _normalize_scene_default(_pick(value, "sceneDefault", "scene_default", "scene")),
+    }
+    return normalized
+
 @router.post("/summarize")
 async def summarize(req: SummarizeRequest):
     history_text = "\n".join(f"{m.role.upper()}: {m.content}" for m in req.messages)
@@ -125,15 +200,24 @@ async def compress_character(req: CompressRequest):
 async def auto_fill_character(req: AutoFillRequest):
     sys = (
         "Eres un ingeniero experto en optimización de prompts para bots de roleplay. "
-        "Analiza la descripción y repártela en un objeto JSON válido con estas llaves exactas:\n"
-        "tagline, personality, lore, speakingStyle, emotionalTendencies, exampleDialogues, tags.\n"
-        "Output JSON only."
+        "Analiza una ficha cruda, YAML, JSON o texto libre y repártela en un objeto JSON válido con estas llaves exactas:\n"
+        "name, tagline, personality, appearance, lore, secondaryCharacters, speakingStyle, emotionalTendencies, exampleDialogues, tags, initialMessage, sceneDefault.\n"
+        "Reglas:\n"
+        "- Output JSON only.\n"
+        "- tags debe ser un array de strings cortos.\n"
+        "- sceneDefault debe ser un objeto con las llaves exactas: location, atmosphere, characterEmotion.\n"
+        "- personality debe condensar identidad, contradicciones, deseos, miedos y límites si están presentes.\n"
+        "- appearance debe ser un string compacto y semiestructurado con etiquetas útiles como: overall, face, hair, eyes, body, clothing, bodyLanguage, voice, specialFeatures.\n"
+        "- Conserva rasgos no humanos o fantásticos dentro de la etiqueta specialFeatures y en los apartados donde correspondan.\n"
+        "- secondaryCharacters debe ser un string en formato de lista YAML compacta. Para cada secundario recurrente incluye: name, relation, role, appearance, personality, speakingStyle, triggerConditions, turnRules, sampleLine. Si no hay secundarios relevantes, devuelve string vacío.\n"
+        "- exampleDialogues debe mostrar la voz del personaje principal y, si procede, la de un secundario.\n"
+        "- Rellena solo con información sustentada por el texto; si algo no aparece, usa string vacío en vez de inventar demasiado."
     )
     payload = {
         "model": DEEPSEEK_MODEL,
-        "messages": [{"role": "system", "content": sys}, {"role": "user", "content": f"Descripción:\n{req.base_description}\n\nMensaje:\n{req.initial_message}"}],
+        "messages": [{"role": "system", "content": sys}, {"role": "user", "content": f"Ficha base:\n{req.base_description}\n\nMensaje inicial sugerido:\n{req.initial_message}"}],
         "temperature": 0.3,
-        "max_tokens": 1500,
+        "max_tokens": 1800,
         "response_format": {"type": "json_object"}, # 🚀 JSON MODE NATIVO
         "stream": False,
     }
@@ -141,13 +225,13 @@ async def auto_fill_character(req: AutoFillRequest):
     content = data["choices"][0]["message"]["content"].strip()
     
     try:
-        character_data = json.loads(content)
+        character_data = _normalize_character_data(json.loads(content))
     except json.JSONDecodeError:
         # Fallback de seguridad en caso de fallo de generación para que no crashee tu backend
         character_data = {
-            "tagline": "", "personality": "", "lore": "", 
-            "speakingStyle": "", "emotionalTendencies": "", 
-            "exampleDialogues": "", "tags": []
+            **AUTO_FILL_DEFAULTS,
+            "tags": [],
+            "sceneDefault": AUTO_FILL_DEFAULTS["sceneDefault"].copy(),
         }
         
     return {"character_data": character_data}

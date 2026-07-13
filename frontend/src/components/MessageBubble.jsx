@@ -39,6 +39,7 @@ const renderContent = (text) => {
 
 export const MessageBubble = ({
   message,
+  disabled = false,
   isUser,
   characterAvatar,
   characterName,
@@ -105,8 +106,9 @@ export const MessageBubble = ({
               </button>
               <button
                 data-testid={`confirm-edit-${message.id}`}
+                disabled={disabled}
                 onClick={submitEdit}
-                className="text-xs text-[#111111] bg-[#C6A45C] hover:bg-[#DBC184] px-3 py-1.5 rounded-full transition-all inline-flex items-center gap-1"
+                className="text-xs text-[#111111] bg-[#C6A45C] hover:bg-[#DBC184] px-3 py-1.5 rounded-full transition-all inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Check size={12} /> Guardar
               </button>
@@ -120,8 +122,9 @@ export const MessageBubble = ({
               <div className="flex items-center gap-1 mr-1">
                 <button
                   data-testid={`swipe-prev-${message.id}`}
+                  disabled={disabled}
                   onClick={() => onSwipe?.(-1)}
-                  className="w-7 h-7 grid place-items-center rounded-full hover:bg-white/5 text-[#A1A1AA] hover:text-[#C6A45C] transition-all"
+                  className="w-7 h-7 grid place-items-center rounded-full hover:bg-white/5 text-[#A1A1AA] hover:text-[#C6A45C] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   aria-label="Variante anterior"
                 >
                   <ChevronLeft size={14} />
@@ -131,8 +134,9 @@ export const MessageBubble = ({
                 </span>
                 <button
                   data-testid={`swipe-next-${message.id}`}
+                  disabled={disabled}
                   onClick={() => onSwipe?.(1)}
-                  className="w-7 h-7 grid place-items-center rounded-full hover:bg-white/5 text-[#A1A1AA] hover:text-[#C6A45C] transition-all"
+                  className="w-7 h-7 grid place-items-center rounded-full hover:bg-white/5 text-[#A1A1AA] hover:text-[#C6A45C] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   aria-label="Variante siguiente"
                 >
                   <ChevronRight size={14} />
@@ -142,24 +146,27 @@ export const MessageBubble = ({
 
             <button
               data-testid={`edit-message-${message.id}`}
+              disabled={disabled}
               onClick={() => setEditing(true)}
-              className="text-[11px] uppercase tracking-wider text-[#71717A] hover:text-[#EDEDED] px-2 py-1 rounded inline-flex items-center gap-1 transition-colors"
+              className="text-[11px] uppercase tracking-wider text-[#71717A] hover:text-[#EDEDED] px-2 py-1 rounded inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <Pencil size={11} /> Editar
             </button>
             {!isUser && isLast && (
               <button
                 data-testid={`regen-message-${message.id}`}
+                disabled={disabled}
                 onClick={() => onRegenerate?.()}
-                className="text-[11px] uppercase tracking-wider text-[#71717A] hover:text-[#C6A45C] px-2 py-1 rounded inline-flex items-center gap-1 transition-colors"
+                className="text-[11px] uppercase tracking-wider text-[#71717A] hover:text-[#C6A45C] px-2 py-1 rounded inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <RotateCw size={11} /> Regenerar
               </button>
             )}
             <button
               data-testid={`delete-message-${message.id}`}
+              disabled={disabled}
               onClick={() => onDelete?.()}
-              className="text-[11px] uppercase tracking-wider text-[#71717A] hover:text-[#C83A3A] px-2 py-1 rounded inline-flex items-center gap-1 transition-colors"
+              className="text-[11px] uppercase tracking-wider text-[#71717A] hover:text-[#C83A3A] px-2 py-1 rounded inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <Trash2 size={11} /> Borrar
             </button>

@@ -5,6 +5,21 @@ import { API } from "../config";
 
 const client = axios.create({ baseURL: API, timeout: 120000 });
 
+const statusFromMessage = (message) => {
+  const match = String(message || "").match(/\b(?:stream failed:|upstream)\s*(\d{3})\b/i);
+  return match ? Number(match[1]) : null;
+};
+
+const readErrorDetail = (err) => {
+  const detail = err?.response?.data?.detail ?? err?.response?.data ?? err?.detail;
+  if (!detail) return "";
+  if (typeof detail === "string") return detail;
+  if (typeof detail?.message === "string") return detail.message;
+  if (typeof detail?.error === "string") return detail.error;
+  if (typeof detail?.deepseek?.error?.message === "string") return detail.deepseek.error.message;
+  return "";
+};
+
 // ---- Retry automático para llamadas no-streaming ----
 // Hasta 2 reintentos extra en error de red (sin respuesta) o 5xx.
 // El delay crece con cada intento: 1.5s, 3s.
@@ -72,16 +87,22 @@ export const checkHealth = async () => {
 //   import { friendlyError } from "../lib/api";
 //   toast.error(friendlyError(err));
 export const friendlyError = (err) => {
-  if (err?.response?.status === 401) return "Clave de DeepSeek inválida. Revísala en configuración.";
-  if (err?.response?.status === 429) return "Demasiadas peticiones. Espera un momento e inténtalo de nuevo.";
-  if (err?.response?.status >= 500) return "El servidor tuvo un problema. Reintentando…";
-  if (!err?.response) return "Error de conexión. Comprueba tu red e inténtalo de nuevo.";
-  return "Algo salió mal. Inténtalo de nuevo.";
+  const status = err?.response?.status ?? err?.status ?? statusFromMessage(err?.message);
+  const detail = readErrorDetail(err);
+
+  if (status === 400) return detail || "La petición no es válida. Revisa los datos enviados e inténtalo de nuevo.";
+  if (status === 401) return "La clave de DeepSeek del backend es inválida o no está configurada.";
+  if (status === 404) return "El endpoint no existe en el backend configurado. Revisa la URL de la API.";
+  if (status === 429) return "Demasiadas peticiones. Espera un momento e inténtalo de nuevo.";
+  if (status >= 500) return "El servidor tuvo un problema. Inténtalo de nuevo en unos segundos.";
+  if (err?.code === "ECONNABORTED") return "La solicitud tardó demasiado. Inténtalo otra vez.";
+  if (!err?.response && !status) return "Error de conexión. Comprueba tu red e inténtalo de nuevo.";
+  return detail || "Algo salió mal. Inténtalo de nuevo.";
 };
 
 export const autoFillCharacter = async ({ base_description, initial_message }) => {
   const { data } = await withRetry(() =>
-    client.post("/character/auto-fill", { base_description, initial_message })
+    client.post("/chat/character/auto-fill", { base_description, initial_message })
   );
   return data.character_data;
 };
@@ -110,7 +131,9 @@ export async function* chatStream(payload, { signal } = {}) {
       });
 
       if (!resp.ok || !resp.body) {
-        throw new Error(`stream failed: ${resp.status}`);
+        const error = new Error(`stream failed: ${resp.status}`);
+        error.status = resp.status;
+        throw error;
       }
 
       const reader = resp.body.getReader();
@@ -134,7 +157,12 @@ export async function* chatStream(payload, { signal } = {}) {
               if (data === "[DONE]") return;
               try {
                 const parsed = JSON.parse(data);
-                if (parsed.error) throw new Error(parsed.error);
+                if (parsed.error) {
+                  const error = new Error(parsed.error);
+                  const status = statusFromMessage(parsed.error);
+                  if (status) error.status = status;
+                  throw error;
+                }
                 if (parsed.delta) yield parsed.delta;
               } catch (e) {
                 // Re-lanzar errores reales del servidor; ignorar chunks malformados.
@@ -152,8 +180,11 @@ export async function* chatStream(payload, { signal } = {}) {
       // Cancelación explícita del usuario — no reintentar nunca.
       if (err.name === "AbortError") throw err;
 
+      const status = err?.status ?? statusFromMessage(err?.message);
+      const isRetryableStatus = !status || status >= 500;
+
       attempts++;
-      if (attempts >= 2) throw err;
+      if (attempts >= 2 || !isRetryableStatus) throw err;
 
       // Esperar antes de reintentar.
       await new Promise(r => setTimeout(r, 1500));
