@@ -169,27 +169,35 @@ export default function CharacterEditor() {
         base_description: baseDesc,
         initial_message: form.initialMessage || ""
       });
-      
-      setForm(s => ({
-        ...s,
-        name: data.name || s.name,
-        tagline: data.tagline || s.tagline,
-        personality: data.personality || s.personality,
-        appearance: data.appearance || s.appearance,
-        lore: data.lore || s.lore,
-        secondaryCharacters: data.secondaryCharacters || s.secondaryCharacters,
-        speakingStyle: data.speakingStyle || s.speakingStyle,
-        emotionalTendencies: data.emotionalTendencies || s.emotionalTendencies,
-        exampleDialogues: data.exampleDialogues || s.exampleDialogues,
-        tags: data.tags?.length ? data.tags : s.tags,
-        initialMessage: data.initialMessage || s.initialMessage,
+
+      const nextForm = {
+        ...form,
+        name: data.name || form.name,
+        tagline: data.tagline || form.tagline,
+        personality: data.personality || form.personality,
+        appearance: data.appearance || form.appearance,
+        lore: data.lore || form.lore,
+        secondaryCharacters: data.secondaryCharacters || form.secondaryCharacters,
+        speakingStyle: data.speakingStyle || form.speakingStyle,
+        emotionalTendencies: data.emotionalTendencies || form.emotionalTendencies,
+        exampleDialogues: data.exampleDialogues || form.exampleDialogues,
+        tags: data.tags?.length ? data.tags : form.tags,
+        initialMessage: data.initialMessage || form.initialMessage,
         sceneDefault: {
-          location: data.sceneDefault?.location || s.sceneDefault?.location || "",
-          atmosphere: data.sceneDefault?.atmosphere || s.sceneDefault?.atmosphere || "",
-          characterEmotion: data.sceneDefault?.characterEmotion || s.sceneDefault?.characterEmotion || "",
+          location: data.sceneDefault?.location || form.sceneDefault?.location || "",
+          atmosphere: data.sceneDefault?.atmosphere || form.sceneDefault?.atmosphere || "",
+          characterEmotion: data.sceneDefault?.characterEmotion || form.sceneDefault?.characterEmotion || "",
         },
-      }));
-      toast.success("¡Tarjeta auto-completada con éxito!");
+      };
+
+      const didChange = JSON.stringify(nextForm) !== JSON.stringify(form);
+      setForm(nextForm);
+
+      if (didChange) {
+        toast.success("¡Tarjeta auto-completada con éxito!");
+      } else {
+        toast.warning("No se detectaron cambios útiles en la ficha. Revisa la YAML o prueba una descripción más completa.");
+      }
     } catch (err) {
       toast.error(friendlyError(err));
     } finally {
