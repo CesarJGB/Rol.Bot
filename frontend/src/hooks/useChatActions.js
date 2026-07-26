@@ -296,25 +296,20 @@ export function useChatActions({ character, session, characterId, profile, setti
 
       const instruction = `[INSTRUCCIÓN DE CONTINUIDAD NARRATIVA]\nEl usuario NO ha emitido ninguna respuesta. Continúa la escena EXCLUSIVAMENTE desde la perspectiva de ${character.name}, profundizando en su psicología o entorno sin actuar por el usuario. Deja el turno abierto.`;
 
-      // 🚀 FIX: Antes se usaba findLastIndex(role === "user") a ciegas, lo cual
-      // saltaba hacia atrás el último turno del asistente e inyectaba la instrucción
-      // ANTES de la respuesta más reciente de la IA, rompiendo el orden cronológico.
-      // Ahora se verifica el rol del último mensaje real del payload:
+      // 🚀 FIX: buildMessages ahora agrega el contexto dinámico como su propio
+      // mensaje "system" al final de la pila (ver prompt.js), en vez de
+      // inyectarlo dentro de un mensaje de usuario histórico. Eso significa que
+      // el último mensaje del payload normalmente YA NO es "assistant" sino ese
+      // bloque de contexto recién generado — pero sigue siendo igual de seguro
+      // añadir la instrucción después de él. Solo si el último mensaje resulta
+      // ser "user" (caso raro: sin contexto dinámico que agregar) anexamos ahí
+      // en vez de crear un turno nuevo.
       const lastMessage = payload.messages[payload.messages.length - 1];
 
-      if (lastMessage && lastMessage.role === "assistant") {
-        // Caso normal de "Continuar": el último turno es de la IA -> añadimos
-        // la instrucción como un nuevo mensaje de usuario AL FINAL de la cadena.
-        payload.messages.push({ role: "user", content: instruction });
+      if (lastMessage && lastMessage.role === "user") {
+        lastMessage.content += `\n\n${instruction}`;
       } else {
-        // Caso de respaldo: si por alguna razón el último mensaje ya es de usuario,
-        // se anexa ahí en vez de crear un nuevo turno.
-        const lastUserIdx = payload.messages.findLastIndex(m => m.role === "user");
-        if (lastUserIdx !== -1) {
-          payload.messages[lastUserIdx].content += `\n\n${instruction}`;
-        } else {
-          payload.messages.push({ role: "user", content: instruction });
-        }
+        payload.messages.push({ role: "user", content: instruction });
       }
 
       const content = await chatContinue(payload);
@@ -395,21 +390,16 @@ export function useChatActions({ character, session, characterId, profile, setti
 
       const instruction = `[INSTRUCCIÓN DE REGENERACIÓN]\nEsta es una variante alternativa (Intento #${attempt}). Explora una ruta emocional o gestual distinta para ${character.name} sin repetir frases previas. NUNCA actúes por el usuario.`;
 
-      // 🚀 FIX: mismo problema de orden que en handleContinue. Si el historial
-      // llega a terminar en un mensaje del asistente (p. ej. dos "Continuar"
-      // seguidos antes de regenerar), findLastIndex a ciegas inyectaría la
-      // instrucción ANTES de esa última respuesta en vez de después.
+      // 🚀 FIX: mismo ajuste que en handleContinue. El contexto dinámico ahora
+      // llega como su propio mensaje "system" al final del payload (ver
+      // prompt.js), así que el último mensaje casi nunca es ya "user". Solo en
+      // ese caso raro anexamos ahí; en cualquier otro, se añade un turno nuevo.
       const lastMessage = payload.messages[payload.messages.length - 1];
 
-      if (lastMessage && lastMessage.role === "assistant") {
-        payload.messages.push({ role: "user", content: instruction });
+      if (lastMessage && lastMessage.role === "user") {
+        lastMessage.content += `\n\n${instruction}`;
       } else {
-        const lastUserIdx = payload.messages.findLastIndex(m => m.role === "user");
-        if (lastUserIdx !== -1) {
-          payload.messages[lastUserIdx].content += `\n\n${instruction}`;
-        } else {
-          payload.messages.push({ role: "user", content: instruction });
-        }
+        payload.messages.push({ role: "user", content: instruction });
       }
 
       const content = await chatRegenerate({
