@@ -291,30 +291,30 @@ export const buildMessages = ({ stablePrompt, dynamicPrompt, history, shortHisto
     }
   });
 
-  // 3. INYECCIÓN INVISIBLE: Buscamos el último mensaje de usuario real en el array limpio
-  if (finalDynamic && finalDynamic.trim()) {
-    const lastUserIdx = squashedHistory.findLastIndex(m => m.role === "user");
-
-    if (lastUserIdx !== -1) {
-      // Inyectamos el contexto dinámico como prefijo dentro de la entrada del usuario.
-      // Así salvamos el "Modo Continuar" y mantenemos intacto el caché anterior.
-      squashedHistory[lastUserIdx].content = `[Contexto dinámico actualizado para este turno]\n${finalDynamic}\n\n${squashedHistory[lastUserIdx].content}`;
-    } else {
-      // Fallback si la ventana de contexto actual se quedó sin mensajes de usuario
-      squashedHistory.unshift({ role: "system", content: `[Contexto dinámico]\n${finalDynamic}` });
-    }
-  }
-
   // A) Mensaje del sistema estático inicial (Cache hit asegurado al inicio)
   const msgs = [{ role: "system", content: finalStable }];
 
-  // B) Agregamos el historial normalizado manteniendo la alternancia perfecta exigida por DeepSeek
+  // B) Historial SIN MODIFICAR — byte a byte igual que en el turno anterior.
+  // Antes se inyectaba el contexto dinámico como prefijo dentro del último
+  // mensaje de usuario, pero ese mismo mensaje se reconstruye "limpio" (sin
+  // el contexto) en cuanto deja de ser el último. Su contenido cambiaba de
+  // un turno a otro, invalidando el prompt cache de DeepSeek desde ese punto
+  // en adelante, en CADA turno (no solo al presionar "Continuar").
   squashedHistory.forEach(m => {
     msgs.push({ 
       role: m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user", 
       content: m.content 
     });
   });
+
+  // C) CONTEXTO DINÁMICO: se agrega como un mensaje NUEVO y separado, siempre
+  // al final de la pila, sin reescribir nada anterior. Este bloque cambia en
+  // cada turno de todas formas (memorias, resumen, emoción), así que es lo
+  // único que se invalida en el caché — todo lo demás permanece intacto y
+  // reutilizable entre turnos.
+  if (finalDynamic && finalDynamic.trim()) {
+    msgs.push({ role: "system", content: `[Contexto dinámico actualizado para este turno]\n${finalDynamic}` });
+  }
 
   return msgs;
 };
