@@ -135,7 +135,7 @@ export const buildStablePrompt = ({ character, profile }) => {
 - Integra pausas realistas en la interacción, tales como silencios tácticos, líneas de diálogo interrumpidas o gestos de contención física.
 - Mantén un enfoque neutro y fiel a la ficción, prescindiendo de actitudes complacientes, explicaciones redundantes o modales propios de un asistente virtual.
 - Si tu ficha incluye rasgos especiales, no humanos o sobrenaturales (cola, orejas felinas, alas, cuernos, prótesis, magia visible, anatomía no humana, etc.), trátalos como parte estable y canónica del cuerpo y comportamiento del personaje.
-- ENTIDADES SECUNDARIAS: Cuando el contexto de la escena involucre la presencia de personajes incidentales (familiares, acompañantes, NPCs del entorno), asume su representation de forma orgánica. Si el usuario interactúa explitamente con alguno de ellos, genera su respuesta en primera persona para resolver el turno con fluidez, y posteriormente retoma el hilo o la perspectiva principal de ${character.name} si la situación lo amerita. La autonomía del personaje del usuario se mantiene completamente intocable.`
+- ENTIDADES SECUNDARIAS: Cuando el contexto de la escena involucre la presencia de personajes incidentales (familiares, acompañantes, NPCs del entorno), asume su representación de forma orgánica. Si el usuario interactúa explícitamente con alguno de ellos, genera su respuesta en primera persona para resolver el turno con fluidez, y posteriormente retoma el hilo o la perspectiva principal de ${character.name} si la situación lo amerita. La autonomía del personaje del usuario se mantiene completamente intocable.`
   );
 
   blocks.push(
@@ -200,7 +200,7 @@ export const buildStablePrompt = ({ character, profile }) => {
 
   blocks.push(
 `### Formato de salida
-- Usa *asteriscos* para acciones, descripciones and detalles sensoriales interiores.
+- Usa *asteriscos* para acciones, descripciones y detalles sensoriales interiores.
 - Texto normal para el diálogo hablado.
 - No antepongas "${character.name}:" por defecto.
 - Si hablan personajes secundarios y hay riesgo de ambigüedad, puedes usar etiquetas breves como "Marta:" o "Lucía:" para aclarar el cambio de voz.
@@ -261,27 +261,38 @@ export const buildSystemPrompt = (args) => {
 export const estimateTokens = (text) => Math.ceil((text || "").length / 4);
 
 // 4. NUEVO CONSTRUCTOR DE MENSAJES (Blindado con Prefix Cache + Algoritmo de Squash)
-export const buildMessages = ({ stablePrompt, dynamicPrompt, history, shortHistory = 8 }) => {
-  const TOKEN_BUDGET = 14000;
+export const buildMessages = ({ stablePrompt, dynamicPrompt, history }) => {
+  const TOKEN_BUDGET = 14000; // Ajustado para dar espacio al historial completo
   const RESPONSE_RESERVE = 500;
   
-  const finalStable = stablePrompt || buildSystemPrompt({history});
+  const finalStable = stablePrompt || buildStablePrompt({history});
   const finalDynamic = dynamicPrompt || "";
 
   const available = TOKEN_BUDGET - RESPONSE_RESERVE - estimateTokens(finalStable) - estimateTokens(finalDynamic);
 
-  let sliced = history.slice(-shortHistory);
+  // 🚀 FIX BUG 1 (PROMPT CACHING):
+  // Se elimina la "ventana deslizante" (history.slice(-shortHistory)).
+  // Pasamos el historial COMPLETO byte a byte. Solo se cortará si excede el 
+  // presupuesto de tokens, lo cual es inevitable en conversaciones muy largas.
+  let sliced = [...history];
   while (sliced.length > 2) {
     const totalHistory = sliced.reduce((acc, m) => acc + estimateTokens(m.content), 0);
     if (totalHistory <= available) break;
-    sliced = sliced.slice(1);
+    sliced = sliced.slice(1); // Esto rompe el caché, pero evita error 413/400
   }
 
   // 1. Clonamos el historial recortado para manipularlo de forma segura
   let processedHistory = sliced.map(m => ({ ...m }));
 
+  // 🚀 FIX BUG 2 (ALTERNANCIA DE ROLES):
+  // DeepSeek exige strictly que el primer mensaje (tras el system) sea 'user'.
+  // Si el historial inicia con un 'assistant' (ej. introducción generada), inyectamos 
+  // un mensaje 'user' mudo al principio para satisfacer la API sin alterar la UI.
+  if (processedHistory.length > 0 && processedHistory[0].role === 'assistant') {
+    processedHistory.unshift({ role: 'user', content: '[Inicio de la escena]' });
+  }
+
   // 2. 🚀 ALGORITMO SQUASH: Combina mensajes consecutivos del mismo rol
-  // Evita el error '400 Bad Request' cuando disparas ráfagas en el botón Continuar
   let squashedHistory = [];
   processedHistory.forEach((m) => {
     if (squashedHistory.length > 0 && squashedHistory[squashedHistory.length - 1].role === m.role) {
@@ -295,11 +306,6 @@ export const buildMessages = ({ stablePrompt, dynamicPrompt, history, shortHisto
   const msgs = [{ role: "system", content: finalStable }];
 
   // B) Historial SIN MODIFICAR — byte a byte igual que en el turno anterior.
-  // Antes se inyectaba el contexto dinámico como prefijo dentro del último
-  // mensaje de usuario, pero ese mismo mensaje se reconstruye "limpio" (sin
-  // el contexto) en cuanto deja de ser el último. Su contenido cambiaba de
-  // un turno a otro, invalidando el prompt cache de DeepSeek desde ese punto
-  // en adelante, en CADA turno (no solo al presionar "Continuar").
   squashedHistory.forEach(m => {
     msgs.push({ 
       role: m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user", 
@@ -308,10 +314,7 @@ export const buildMessages = ({ stablePrompt, dynamicPrompt, history, shortHisto
   });
 
   // C) CONTEXTO DINÁMICO: se agrega como un mensaje NUEVO y separado, siempre
-  // al final de la pila, sin reescribir nada anterior. Este bloque cambia en
-  // cada turno de todas formas (memorias, resumen, emoción), así que es lo
-  // único que se invalida en el caché — todo lo demás permanece intacto y
-  // reutilizable entre turnos.
+  // al final de la pila, sin reescribir nada anterior.
   if (finalDynamic && finalDynamic.trim()) {
     msgs.push({ role: "system", content: `[Contexto dinámico actualizado para este turno]\n${finalDynamic}` });
   }
