@@ -5,8 +5,40 @@ from app.config import DEEPSEEK_MODEL
 from app.core.client import deepseek_agent
 from app.core.directives import pick_directives, looks_cut_off
 import json
+import logging
+
+# 🚀 NUEVO: Configuración de logger para la consola del backend
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 router = APIRouter(prefix="/chat", tags=["Chat Operations"])
+
+# 🚀 NUEVO: Helper para loguear los tokens y ver si el caché pega
+def _log_usage(usage: dict):
+    if not usage:
+        return
+    
+    prompt_tokens = usage.get("prompt_tokens", 0)
+    completion_tokens = usage.get("completion_tokens", 0)
+    
+    # DeepSeek usa prompt_tokens_details para el caché
+    prompt_details = usage.get("prompt_tokens_details", {})
+    cached_tokens = prompt_details.get("cached_tokens", 0) if prompt_details else 0
+    
+    miss_tokens = prompt_tokens - cached_tokens
+    
+    logger.info("===========================================")
+    logger.info("📊 REPORTE DE TOKENOS - DEEPSEEK API")
+    logger.info(f"Total prompt enviado       : {prompt_tokens} tokens")
+    logger.info(f"🟢 Tokens cacheados (HIT)  : {cached_tokens} tokens")
+    logger.info(f"🔴 Tokens nuevos (MISS)    : {miss_tokens} tokens")
+    logger.info(f"Tokens generados (salida)  : {completion_tokens} tokens")
+    logger.info("===========================================")
 
 async def _verify_and_auto_continue(content: str, finish_reason: str, base_payload: dict, original_temp: float) -> str:
     """Helper DRY para manejar textos cortados a mitad de frase."""
@@ -47,6 +79,9 @@ async def chat(req: ChatRequest):
         payload["stop"] = req.stop
 
     data = await deepseek_agent.post("/chat/completions", payload)
+    
+    # 🚀 NUEVO: Loguear el uso aquí
+    _log_usage(data.get("usage", {}))
     
     try:
         content = data["choices"][0]["message"]["content"]
@@ -97,6 +132,10 @@ async def chat_regenerate(req: ChatRequest):
     }
     
     data = await deepseek_agent.post("/chat/completions", payload)
+
+    # 🚀 NUEVO: Loguear el uso aquí
+    _log_usage(data.get("usage", {}))
+    
     try:
         content = data["choices"][0]["message"]["content"]
         finish_reason = data["choices"][0].get("finish_reason", "")
@@ -139,6 +178,10 @@ async def chat_continue(req: ContinueRequest):
     }
     
     data = await deepseek_agent.post("/chat/completions", payload)
+
+    # 🚀 NUEVO: Loguear el uso aquí
+    _log_usage(data.get("usage", {}))
+    
     try:
         content = data["choices"][0]["message"]["content"]
         finish_reason = data["choices"][0].get("finish_reason", "")
@@ -159,6 +202,8 @@ async def chat_stream(req: ChatRequest):
         "frequency_penalty": req.frequency_penalty,
         "top_p": req.top_p,
         "stream": True,
+        # 🚀 NUEVO: Necesario para que DeepSeek devuelva los tokens en el último chunk del stream
+        "stream_options": {"include_usage": True} 
     }
     if req.stop:
         payload["stop"] = req.stop
@@ -185,6 +230,12 @@ async def chat_stream(req: ChatRequest):
                         return
                     try:
                         obj = json.loads(data_str)
+                        
+                        # 🚀 NUEVO: Capturar el usage cuando llega en el stream
+                        if obj.get("usage"):
+                            _log_usage(obj.get("usage"))
+                            continue # Este chunk no tiene texto, solo stats, no se envía al frontend
+                            
                         delta = obj.get("choices", [{}])[0].get("delta", {})
                         
                         reasoning = delta.get("reasoning_content")
