@@ -30,6 +30,7 @@ export function useChatActions({ character, session, characterId, profile, setti
 
   const abortRef = useRef(null);
   const bgUpdateInFlight = useRef(null);
+  const lastBgUpdateRequest = useRef(null); // 🚀 NUEVO: Cola para no perder datos
   const prevSessionIdRef = useRef(session?.id || null);
 
   const currentParams = useMemo(() => stylingToParams(settings), [settings]);
@@ -75,14 +76,12 @@ export function useChatActions({ character, session, characterId, profile, setti
     const stablePrompt = buildStablePrompt(args);
     const dynamicPrompt = buildDynamicPrompt(args);
 
-    const maxHistoryWindow = settings.shortHistory || 12;
-
+    // 🚀 FIX BUG 1: Se elimina maxHistoryWindow y shortHistory de buildMessages
     return {
       messages: buildMessages({ 
         stablePrompt, 
         dynamicPrompt, 
-        history: optimizedHistory, 
-        shortHistory: maxHistoryWindow 
+        history: optimizedHistory 
       }),
       ...currentParams,
     };
@@ -91,7 +90,12 @@ export function useChatActions({ character, session, characterId, profile, setti
   // ---- Tareas en segundo plano ultra eficientes ----
   const runBackgroundUpdates = useCallback(async (updatedMessages, currentSummary, currentMemories, currentEmotion) => {
     const sessionId = session?.id;
-    if (bgUpdateInFlight.current === sessionId) return;
+
+    // 🚀 FIX: Si hay algo corriendo, guardamos esta petición para procesarla al final
+    if (bgUpdateInFlight.current === sessionId) {
+      lastBgUpdateRequest.current = { updatedMessages, currentSummary, currentMemories, currentEmotion };
+      return;
+    }
     bgUpdateInFlight.current = sessionId;
 
     const cleanMessages = updatedMessages.map(m => ({
@@ -100,8 +104,10 @@ export function useChatActions({ character, session, characterId, profile, setti
     }));
 
     const tasks = [];
+    const maxHistoryWindow = settings.shortHistory || 12; // 🚀 FIX NaN
+
     if (cleanMessages.length >= (settings.summarizeEvery || 8)) {
-      const cutoff = Math.max(0, cleanMessages.length - settings.shortHistory);
+      const cutoff = Math.max(0, cleanMessages.length - maxHistoryWindow);
       if (cutoff >= 2) {
         const chunk = cleanMessages.slice(0, cutoff);
         tasks.push(
@@ -129,7 +135,15 @@ export function useChatActions({ character, session, characterId, profile, setti
       );
     }
 
-    if (tasks.length === 0) { bgUpdateInFlight.current = null; return; }
+    if (tasks.length === 0) {
+      bgUpdateInFlight.current = null;
+      if (lastBgUpdateRequest.current) {
+        const nextReq = lastBgUpdateRequest.current;
+        lastBgUpdateRequest.current = null;
+        runBackgroundUpdates(nextReq.updatedMessages, nextReq.currentSummary, nextReq.currentMemories, nextReq.currentEmotion);
+      }
+      return;
+    }
 
     try {
       const results = (await Promise.all(tasks)).filter(Boolean);
@@ -159,6 +173,13 @@ export function useChatActions({ character, session, characterId, profile, setti
       });
     } finally {
       bgUpdateInFlight.current = null;
+
+      // 🚀 FIX: Si llegaron más mensajes mientras procesábamos, ejecutamos los últimos
+      if (lastBgUpdateRequest.current) {
+        const nextReq = lastBgUpdateRequest.current;
+        lastBgUpdateRequest.current = null;
+        runBackgroundUpdates(nextReq.updatedMessages, nextReq.currentSummary, nextReq.currentMemories, nextReq.currentEmotion);
+      }
     }
   }, [character, settings, characterId, session?.id, updateSession]);
 
@@ -197,6 +218,11 @@ export function useChatActions({ character, session, characterId, profile, setti
             const snapshot = finalContent;
             updateBoundSession(sessionId, (s) => {
               const msgs = [...s.messages];
+              const lastIdx = msgs.length - 1; // 🚀 OPTIMIZACIÓN
+              if (msgs[lastIdx]?.id === aiMsg.id) {
+                msgs[lastIdx] = { ...msgs[lastIdx], content: snapshot };
+                return { ...s, messages: msgs };
+              }
               const idx = msgs.findIndex(m => m.id === aiMsg.id);
               if (idx >= 0) msgs[idx] = { ...msgs[idx], content: snapshot };
               return { ...s, messages: msgs };
@@ -209,6 +235,11 @@ export function useChatActions({ character, session, characterId, profile, setti
           const snapshot = finalContent;
           updateBoundSession(sessionId, (s) => {
             const msgs = [...s.messages];
+            const lastIdx = msgs.length - 1; // 🚀 OPTIMIZACIÓN
+            if (msgs[lastIdx]?.id === aiMsg.id) {
+              msgs[lastIdx] = { ...msgs[lastIdx], content: snapshot };
+              return { ...s, messages: msgs };
+            }
             const idx = msgs.findIndex(m => m.id === aiMsg.id);
             if (idx >= 0) msgs[idx] = { ...msgs[idx], content: snapshot };
             return { ...s, messages: msgs };
@@ -240,6 +271,11 @@ export function useChatActions({ character, session, characterId, profile, setti
               
               updateBoundSession(sessionId, (s) => {
                 const msgs = [...s.messages];
+                const lastIdx = msgs.length - 1;
+                if (msgs[lastIdx]?.id === aiMsg.id) {
+                  msgs[lastIdx] = { ...msgs[lastIdx], content: finalContent };
+                  return { ...s, messages: msgs };
+                }
                 const idx = msgs.findIndex(m => m.id === aiMsg.id);
                 if (idx >= 0) msgs[idx] = { ...msgs[idx], content: finalContent };
                 return { ...s, messages: msgs };
@@ -251,6 +287,11 @@ export function useChatActions({ character, session, characterId, profile, setti
         finalContent = await chatComplete(payload);
         updateBoundSession(sessionId, (s) => {
           const msgs = [...s.messages];
+          const lastIdx = msgs.length - 1;
+          if (msgs[lastIdx]?.id === aiMsg.id) {
+            msgs[lastIdx] = { ...msgs[lastIdx], content: finalContent };
+            return { ...s, messages: msgs };
+          }
           const idx = msgs.findIndex(m => m.id === aiMsg.id);
           if (idx >= 0) msgs[idx] = { ...msgs[idx], content: finalContent };
           return { ...s, messages: msgs };
@@ -296,14 +337,6 @@ export function useChatActions({ character, session, characterId, profile, setti
 
       const instruction = `[INSTRUCCIÓN DE CONTINUIDAD NARRATIVA]\nEl usuario NO ha emitido ninguna respuesta. Continúa la escena EXCLUSIVAMENTE desde la perspectiva de ${character.name}, profundizando en su psicología o entorno sin actuar por el usuario. Deja el turno abierto.`;
 
-      // 🚀 FIX: buildMessages ahora agrega el contexto dinámico como su propio
-      // mensaje "system" al final de la pila (ver prompt.js), en vez de
-      // inyectarlo dentro de un mensaje de usuario histórico. Eso significa que
-      // el último mensaje del payload normalmente YA NO es "assistant" sino ese
-      // bloque de contexto recién generado — pero sigue siendo igual de seguro
-      // añadir la instrucción después de él. Solo si el último mensaje resulta
-      // ser "user" (caso raro: sin contexto dinámico que agregar) anexamos ahí
-      // en vez de crear un turno nuevo.
       const lastMessage = payload.messages[payload.messages.length - 1];
 
       if (lastMessage && lastMessage.role === "user") {
@@ -357,8 +390,19 @@ export function useChatActions({ character, session, characterId, profile, setti
         setStreamingPlaceholder(false);
       }
     } else {
+      // 🚀 FIX: Añadir como nueva variante en lugar de sobrescribir
+      const existingVariants = original.variants && original.variants.length > 0 
+        ? original.variants 
+        : [original.content];
+      const newVariants = [...existingVariants, newContent];
+      
       const next = [...messages];
-      next[msgIndex] = { ...original, content: newContent, variants: [newContent], variantIndex: 0 };
+      next[msgIndex] = { 
+        ...original, 
+        content: newContent, 
+        variants: newVariants, 
+        variantIndex: newVariants.length - 1 
+      };
       updateBoundSession(sessionId, (s) => ({ ...s, messages: next }));
     }
   };
@@ -390,10 +434,6 @@ export function useChatActions({ character, session, characterId, profile, setti
 
       const instruction = `[INSTRUCCIÓN DE REGENERACIÓN]\nEsta es una variante alternativa (Intento #${attempt}). Explora una ruta emocional o gestual distinta para ${character.name} sin repetir frases previas. NUNCA actúes por el usuario.`;
 
-      // 🚀 FIX: mismo ajuste que en handleContinue. El contexto dinámico ahora
-      // llega como su propio mensaje "system" al final del payload (ver
-      // prompt.js), así que el último mensaje casi nunca es ya "user". Solo en
-      // ese caso raro anexamos ahí; en cualquier otro, se añade un turno nuevo.
       const lastMessage = payload.messages[payload.messages.length - 1];
 
       if (lastMessage && lastMessage.role === "user") {
