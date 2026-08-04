@@ -142,6 +142,7 @@ export const AppProvider = ({ children }) => {
   const [settings, setSettings] = useState(() => loadSettings());
 
   const chatsSaveTimer = useRef(null);
+  const immediateChatsSaveRef = useRef(false);
   const chatsRef = useRef(chats);
   chatsRef.current = chats;
 
@@ -156,13 +157,37 @@ export const AppProvider = ({ children }) => {
   useEffect(() => { trySave(saveCharacters, characters); }, [characters]);
   useEffect(() => {
     if (chatsSaveTimer.current) clearTimeout(chatsSaveTimer.current);
-    chatsSaveTimer.current = setTimeout(() => { chatsSaveTimer.current = null; trySave(saveChats, chats); }, 800);
+
+    if (immediateChatsSaveRef.current) {
+      immediateChatsSaveRef.current = false;
+      chatsSaveTimer.current = null;
+      trySave(saveChats, chats);
+      return undefined;
+    }
+
+    chatsSaveTimer.current = setTimeout(() => {
+      chatsSaveTimer.current = null;
+      trySave(saveChats, chats);
+    }, 800);
+
     return () => { if (chatsSaveTimer.current) clearTimeout(chatsSaveTimer.current); };
   }, [chats]);
   useEffect(() => {
     const handleBeforeUnload = () => flushChats();
+    const handlePageHide = () => flushChats();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") flushChats();
+    };
+
     window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+    window.addEventListener("pagehide", handlePageHide);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      window.removeEventListener("pagehide", handlePageHide);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [flushChats]);
   useEffect(() => { trySave(saveProfile, profile); }, [profile]);
   useEffect(() => { trySave(saveSettings, settings); }, [settings]);
@@ -181,6 +206,7 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   const deleteCharacter = useCallback((id) => {
+    immediateChatsSaveRef.current = true;
     setCharacters(prev => prev.filter(c => c.id !== id));
     setChats(prev => {
       const copy = { ...prev };
@@ -257,26 +283,34 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   const deleteSession = useCallback((characterId, sessionId) => {
+    immediateChatsSaveRef.current = true;
+
     setChats(prev => {
       const bundle = prev[characterId];
       if (!bundle?.sessions?.[sessionId]) return prev;
-      const { [sessionId]: _, ...rest } = bundle.sessions;
+
+      const { [sessionId]: _deleted, ...rest } = bundle.sessions;
       const remainingIds = Object.keys(rest);
+
+      // El último chat se elimina de verdad. La pantalla decide si vuelve a la galería.
+      if (remainingIds.length === 0) {
+        const next = { ...prev };
+        delete next[characterId];
+        return next;
+      }
+
       let activeSessionId = bundle.activeSessionId;
       if (sessionId === activeSessionId) {
-        activeSessionId = remainingIds[0] || null;
+        activeSessionId = remainingIds
+          .sort((a, b) => (rest[b].updatedAt || 0) - (rest[a].updatedAt || 0))[0];
       }
-      if (!activeSessionId) {
-        const character = characters.find(c => c.id === characterId);
-        const fresh = buildSession({ name: "Conversación principal" }, character);
-        return {
-          ...prev,
-          [characterId]: { sessions: { [fresh.id]: fresh }, activeSessionId: fresh.id },
-        };
-      }
-      return { ...prev, [characterId]: { sessions: rest, activeSessionId } };
+
+      return {
+        ...prev,
+        [characterId]: { sessions: rest, activeSessionId },
+      };
     });
-  }, [characters]);
+  }, []);
 
   const updateActiveSession = useCallback((characterId, updater) => {
     setChats(prev => {
@@ -351,3 +385,4 @@ export const useApp = () => {
   if (!ctx) throw new Error("useApp must be used inside <AppProvider>");
   return ctx;
 };
+
