@@ -3,7 +3,7 @@ import { Send } from "lucide-react";
 
 export function ChatComposer({ input, setInput, onSend, busy, characterName }) {
   return (
-    <div className="sticky bottom-0 safe-bottom backdrop-blur-xl bg-[#050505]/90 border-t border-white/[0.06]">
+    <div className="shrink-0 sticky bottom-0 z-20 safe-bottom backdrop-blur-xl bg-[#050505]/90 border-t border-white/[0.06]">
       <div className="max-w-3xl mx-auto px-3 py-3 flex items-end gap-2">
         <textarea
           data-testid="message-composer"
@@ -33,3 +33,4 @@ export function ChatComposer({ input, setInput, onSend, busy, characterName }) {
     </div>
   );
 }
+
