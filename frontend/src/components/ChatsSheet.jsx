@@ -1,6 +1,10 @@
 import React, { useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "./ui/sheet";
 import { Plus, Check, Trash2, Pencil } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "./ui/alert-dialog";
 
 const formatDate = (ts) => {
   if (!ts) return "";
@@ -12,10 +16,18 @@ const formatDate = (ts) => {
 export const ChatsSheet = ({ open, onOpenChange, busy = false, sessions, activeSessionId, onSwitch, onCreate, onRename, onDelete }) => {
   const [renamingId, setRenamingId] = useState(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const list = Object.values(sessions || {}).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 
   const startRename = (s) => { setRenamingId(s.id); setRenameDraft(s.name); };
+  const confirmDelete = () => {
+    if (busy || !deleteTarget) return;
+    onDelete(deleteTarget.id);
+    setDeleteTarget(null);
+    onOpenChange(false);
+  };
+
   const confirmRename = () => {
     if (busy) return;
     if (renameDraft.trim()) onRename(renamingId, renameDraft.trim());
@@ -23,7 +35,8 @@ export const ChatsSheet = ({ open, onOpenChange, busy = false, sessions, activeS
   };
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <>
+      <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="bottom" className="bg-[#0a0a0a] border-t border-white/[0.08] text-[#EDEDED] max-h-[85vh] overflow-y-auto scroll-thin">
         <SheetHeader className="text-left">
           <SheetTitle className="font-display text-2xl">Conversaciones</SheetTitle>
@@ -104,7 +117,7 @@ export const ChatsSheet = ({ open, onOpenChange, busy = false, sessions, activeS
                       <button
                         data-testid={`delete-session-${s.id}`}
                         disabled={busy}
-                        onClick={() => { if (window.confirm(`¿Eliminar la conversación "${s.name}"? Esta acción no se puede deshacer.`)) onDelete(s.id); }}
+                        onClick={() => setDeleteTarget(s)}
                         className="px-3 py-2 text-[#A1A1AA] hover:text-[#C83A3A] hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                         aria-label="Eliminar"
                         title="Eliminar"
@@ -119,6 +132,33 @@ export const ChatsSheet = ({ open, onOpenChange, busy = false, sessions, activeS
           })}
         </ul>
       </SheetContent>
-    </Sheet>
+      </Sheet>
+
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+      >
+        <AlertDialogContent className="bg-[#111111] border border-white/[0.08] text-[#EDEDED] max-w-[calc(100%-2rem)] rounded-2xl">
+          <AlertDialogHeader className="text-left">
+            <AlertDialogTitle>¿Eliminar conversación?</AlertDialogTitle>
+            <AlertDialogDescription className="text-[#A1A1AA]">
+              Se eliminará «{deleteTarget?.name || "esta conversación"}» y su historial. Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-2">
+            <AlertDialogCancel className="mt-0 border-white/[0.12] text-[#EDEDED] hover:bg-white/5">
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              disabled={busy}
+              className="bg-[#C83A3A] text-white hover:bg-[#A82E2E] focus:ring-[#C83A3A]"
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 };
