@@ -73,7 +73,7 @@ export default function Chat() {
   const sessionCount = Object.keys(bundle.sessions || {}).length;
 
   return (
-    <div className="min-h-screen app-bg flex flex-col">
+    <div className="h-[100dvh] min-h-0 max-h-[100dvh] overflow-hidden app-bg flex flex-col">
       <TopBar
         title={character.name}
         subtitle={session?.name ? `${session.name}${sessionCount > 1 ? ` · ${sessionCount} chats` : ""}` : (session?.scene?.location || character.sceneDefault?.location || "en escena")}
@@ -165,8 +165,20 @@ export default function Chat() {
         onSwitch={(sid) => switchSession(characterId, sid)}
         onCreate={() => { createSession(characterId); setChatsOpen(false); toast.success("Nueva conversación creada"); }}
         onRename={(sid, name) => renameSession(characterId, sid, name)}
-        onDelete={(sid) => { deleteSession(characterId, sid); toast.success("Conversación eliminada"); }}
+        onDelete={(sid) => {
+          const wasLastSession = Object.keys(bundle.sessions || {}).length === 1;
+          deleteSession(characterId, sid);
+          setChatsOpen(false);
+
+          if (wasLastSession) {
+            navigate("/");
+            toast.success("Conversación eliminada");
+          } else {
+            toast.success("Conversación eliminada");
+          }
+        }}
       />
     </div>
   );
 }
+
